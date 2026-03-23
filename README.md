@@ -2,10 +2,19 @@
 
 Express API for the TalentTrust decentralized freelancer escrow protocol. Handles contract metadata, reputation, and integration with Stellar/Soroban.
 
+## Features
+
+- **Queue-Based Background Jobs**: Durable job processing with BullMQ and Redis
+- **Contract Processing**: Asynchronous blockchain contract operations
+- **Email Notifications**: Non-blocking email delivery
+- **Reputation System**: Background reputation score calculations
+- **Blockchain Sync**: Efficient blockchain data synchronization
+
 ## Prerequisites
 
 - Node.js 18+
 - npm or yarn
+- Redis 6.0+ (for background job queue)
 
 ## Setup
 
@@ -16,6 +25,18 @@ cd talenttrust-backend
 
 # Install dependencies
 npm install
+
+# Start Redis (required for background jobs)
+# Option 1: Using Docker
+docker run -d -p 6379:6379 redis:7-alpine
+
+# Option 2: Using local Redis
+redis-server
+
+# Configure environment (optional)
+export REDIS_HOST=localhost
+export REDIS_PORT=6379
+export REDIS_PASSWORD=your-password
 
 # Build
 npm run build
