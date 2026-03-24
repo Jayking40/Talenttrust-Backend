@@ -187,7 +187,7 @@ describe('TransactionPoller', () => {
     (poller as any).pollWithBackoff = jest.fn().mockRejectedValue(error);
 
     await poller.poll(txHash);
-    expect(spy).toHaveBeenCalledWith(`Polling failed for ${txHash}:`, error);
+    expect(spy).toHaveBeenCalledWith(`Polling orchestrator failed for ${txHash}:`, error);
     
     spy.mockRestore();
     (poller as any).pollWithBackoff = originalMethod;
