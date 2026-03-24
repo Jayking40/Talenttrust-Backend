@@ -1,18 +1,19 @@
-import express, { Request, Response } from 'express';
+import { createApp } from './app';
+import { readObservabilityConfig } from './observability';
 
-const app = express();
-const PORT = process.env.PORT || 3001;
+const config = readObservabilityConfig();
+const { app, healthService } = createApp({ config });
 
-app.use(express.json());
-
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', service: 'talenttrust-backend' });
+const server = app.listen(config.port, () => {
+  console.log(`TalentTrust API listening on http://localhost:${config.port}`);
 });
 
-app.get('/api/v1/contracts', (_req: Request, res: Response) => {
-  res.json({ contracts: [] });
-});
+const shutdown = (): void => {
+  healthService.close?.();
+  server.close(() => {
+    process.exit(0);
+  });
+};
 
-app.listen(PORT, () => {
-  console.log(`TalentTrust API listening on http://localhost:${PORT}`);
-});
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
