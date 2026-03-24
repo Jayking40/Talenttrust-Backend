@@ -32,13 +32,15 @@ npm start
 
 ## Scripts
 
-| Script   | Description                    |
-|----------|--------------------------------|
-| `npm run build` | Compile TypeScript to `dist/`  |
-| `npm run start` | Run production server          |
-| `npm run dev`   | Run with ts-node-dev           |
-| `npm test`      | Run Jest tests                 |
-| `npm run lint`  | Run ESLint                     |
+Development commands:
+- `npm run dev`: Start the development server with hot-reload
+- `npm run build`: Compile TypeScript to `dist`
+- `npm run start`: Run the compiled server
+- `npm run test`: Run the Jest test suite
+- `npm run lint`: Run ESLint
+
+## Security
+For details on input sanitization and XSS defense, please read our [Security Documentation](./docs/backend/security.md).
 
 ## Contributing
 
