@@ -46,6 +46,9 @@ npm start
 2. Install deps, run tests and build: `npm install && npm test && npm run build`.
 3. Open a pull request. CI runs build (and tests when present) on push/PR to `main`.
 
+## Documentation
+- [Backend Notification Services](./docs/backend/notifications.md)
+
 ## CI/CD
 
 GitHub Actions runs on push and pull requests to `main`:
