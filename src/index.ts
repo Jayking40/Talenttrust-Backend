@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(express.json());
 
-//  Rate limiting 
+// Rate limiting 
 // Applied only to /api/* routes to leave /health unthrottled for load-balancer
 // probes and monitoring.
  
