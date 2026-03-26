@@ -1,7 +1,11 @@
 import express, { Request, Response } from 'express';
+import { secretsManager, initializeSecrets } from './config/secrets';
+
+// Initialize secrets early in the application lifecycle
+initializeSecrets();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = secretsManager.getValue<number>('PORT');
 
 app.use(express.json());
 
