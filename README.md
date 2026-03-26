@@ -55,6 +55,30 @@ GitHub Actions runs on push and pull requests to `main`:
 
 Keep the build passing before merging.
 
+## New Features
+
+### 1. Authentication Middleware (#55)
+All routes under `/api/v1/admin/*` are protected by JWT authentication.
+- **Header**: `Authorization: Bearer <token>`
+- **Validation**: Ensures token is valid and not expired.
+
+### 2. Event Idempotency (#67)
+The `/api/v1/events` endpoint requires an `Idempotency-Key` header to prevent duplicate processing of the same smart contract event.
+- **Header**: `Idempotency-Key: <unique-uuid-or-hash>`
+- **Behavior**: If a key is seen again within 1 hour, the cached response is returned instead of re-processing.
+
+### 3. Smart-Contract Event Indexer (#70)
+A pipeline for indexing escrow and dispute lifecycle updates from smart contracts.
+- **Endpoint**: `POST /api/v1/events`
+- **Supported Events**: `escrow:created`, `escrow:completed`, `dispute:initiated`, `dispute:resolved`.
+
+## Testing
+
+Run unit and integration tests to verify these features:
+```bash
+npm test
+```
+
 ## License
 
 MIT
