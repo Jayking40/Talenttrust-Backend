@@ -40,6 +40,31 @@ npm start
 | `npm test`      | Run Jest tests                 |
 | `npm run lint`  | Run ESLint                     |
 
+## Request Validation Framework
+
+The API now includes a schema-based request validation framework for:
+
+- Route `params`
+- URL `query`
+- JSON request `body`
+
+Validation is strict by default:
+
+- Unknown fields are rejected.
+- Required fields are enforced.
+- Type and range/length constraints are validated.
+
+Validation middleware returns HTTP `400` with the shape:
+
+```json
+{
+	"error": "Validation failed",
+	"details": ["query.admin is not allowed"]
+}
+```
+
+See `docs/backend/request-validation-framework.md` for implementation details and security notes.
+
 ## Contributing
 
 1. Fork the repo and create a branch from `main`.
