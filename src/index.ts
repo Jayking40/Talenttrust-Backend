@@ -1,81 +1,107 @@
-import express, { Request, Response } from 'express';
-import {
-  authenticateMiddleware,
-  requirePermission,
-  AuthenticatedRequest,
-} from './auth';
+/**
+ * @module index
+ * @description Server entry point.
+ *
+ * Bootstraps the Express application and binds it to a port.
+ * Import `createApp` from `./app` in tests — never import this file directly
+ * in test suites, as it starts the HTTP server immediately.
+ */
 
-const app = express();
+import { createApp } from './app';
+
 const PORT = process.env.PORT || 3001;
+const app = createApp();
 
-app.use(express.json());
+/**
+ * Enqueue a background job
+ * POST /api/v1/jobs
+ * Body: { type: JobType, payload: JobPayload, options?: { priority, delay } }
+ */
+app.post('/api/v1/jobs', async (req: Request, res: Response) => {
+  try {
+    const { type, payload, options } = req.body;
 
-// --- Public routes ---
+    if (!type || !payload) {
+      return res.status(400).json({ error: 'Job type and payload are required' });
+    }
 
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', service: 'talenttrust-backend' });
+    if (!Object.values(JobType).includes(type)) {
+      return res.status(400).json({ error: `Invalid job type: ${type}` });
+    }
+
+    const jobId = await queueManager.addJob(type, payload, options);
+    res.status(201).json({ jobId, type, status: 'queued' });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ error: `Failed to enqueue job: ${message}` });
+  }
 });
 
-// --- Protected routes ---
+/**
+ * Get job status
+ * GET /api/v1/jobs/:type/:jobId
+ */
+app.get('/api/v1/jobs/:type/:jobId', async (req: Request, res: Response) => {
+  try {
+    const { type, jobId } = req.params;
 
-app.get(
-  '/api/v1/contracts',
-  authenticateMiddleware,
-  requirePermission('contracts', 'read'),
-  (_req: AuthenticatedRequest, res: Response) => {
-    res.json({ contracts: [] });
-  },
-);
+    if (!Object.values(JobType).includes(type as JobType)) {
+      return res.status(400).json({ error: `Invalid job type: ${type}` });
+    }
 
-app.post(
-  '/api/v1/contracts',
-  authenticateMiddleware,
-  requirePermission('contracts', 'create'),
-  (_req: AuthenticatedRequest, res: Response) => {
-    res.status(201).json({ contract: { id: 'new' } });
-  },
-);
+    const status = await queueManager.getJobStatus(type as JobType, jobId);
+    
+    if (!status) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
 
-app.get(
-  '/api/v1/users',
-  authenticateMiddleware,
-  requirePermission('users', 'read'),
-  (_req: AuthenticatedRequest, res: Response) => {
-    res.json({ users: [] });
-  },
-);
+    res.json(status);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ error: `Failed to get job status: ${message}` });
+  }
+});
 
-app.delete(
-  '/api/v1/users/:id',
-  authenticateMiddleware,
-  requirePermission('users', 'delete'),
-  (req: AuthenticatedRequest, res: Response) => {
-    res.json({ deleted: req.params.id });
-  },
-);
-
-app.get(
-  '/api/v1/disputes',
-  authenticateMiddleware,
-  requirePermission('disputes', 'read'),
-  (_req: AuthenticatedRequest, res: Response) => {
-    res.json({ disputes: [] });
-  },
-);
-
-app.delete(
-  '/api/v1/disputes/:id',
-  authenticateMiddleware,
-  requirePermission('disputes', 'delete'),
-  (req: AuthenticatedRequest, res: Response) => {
-    res.json({ deleted: req.params.id });
-  },
-);
-
-export { app };
-
-if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`TalentTrust API listening on http://localhost:${PORT}`);
-  });
+/**
+ * Initialize queues on startup
+ */
+async function initializeQueues() {
+  console.log('Initializing background job queues...');
+  
+  for (const jobType of Object.values(JobType)) {
+    await queueManager.initializeQueue(jobType);
+    console.log(`Queue initialized: ${jobType}`);
+  }
+  
+  console.log('All queues initialized successfully');
 }
+
+/**
+ * Graceful shutdown handler
+ */
+async function gracefulShutdown() {
+  console.log('Received shutdown signal, closing gracefully...');
+  await queueManager.shutdown();
+  process.exit(0);
+}
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+/**
+ * Start the server
+ */
+async function startServer() {
+  try {
+    await initializeQueues();
+    
+    app.listen(PORT, () => {
+      console.log(`TalentTrust API listening on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
