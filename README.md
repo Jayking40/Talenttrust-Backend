@@ -173,6 +173,19 @@ Coverage thresholds are enforced in Jest at 95% for statements, branches, functi
 4. Current persistence is in-memory and intended for testability and local development; production hardening should add durable storage and capacity limits.
 5. Trust boundary remains the ingestion endpoint; event authenticity and signature verification are future integration concerns.
 
+## Environment Variables
+
+All configuration is managed through `src/config/` and validated at startup. Copy `.env.example` to `.env` to get started. See [docs/backend/config.md](docs/backend/config.md) for full details.
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3001` | HTTP port for the Express server |
+| `NODE_ENV` | `development` | Runtime environment |
+| `STELLAR_HORIZON_URL` | `https://horizon-testnet.stellar.org` | Stellar Horizon API endpoint |
+| `STELLAR_NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` | Network passphrase for signing |
+| `SOROBAN_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban JSON-RPC endpoint |
+| `SOROBAN_CONTRACT_ID` | *(empty)* | Deployed escrow contract ID |
+
 ## Contributing
 
 1. Fork the repo and create a branch: `git checkout -b feature/<ticket>-description`
