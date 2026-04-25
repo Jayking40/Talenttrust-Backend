@@ -132,12 +132,20 @@ export class QueueManager {
       console.error(`[${jobType}] Job ${job?.id} failed:`, error.message);
     });
 
+    worker.on('error', (error: Error) => {
+      console.error(`[${jobType}] Worker error:`, error.message);
+    });
+
     queueEvents.on('waiting', ({ jobId }: { jobId: string | undefined }) => {
       console.log(`[${jobType}] Job ${jobId} is waiting`);
     });
 
     queueEvents.on('active', ({ jobId }: { jobId: string | undefined }) => {
       console.log(`[${jobType}] Job ${jobId} is active`);
+    });
+
+    queueEvents.on('error', (error: Error) => {
+      console.error(`[${jobType}] QueueEvents error:`, error.message);
     });
   }
 
