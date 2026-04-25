@@ -12,12 +12,13 @@
  *    introduced (tracked in docs/backend/security.md).
  */
 
-import express, { Request, Response, NextFunction } from 'express';
+import express from 'express';
 import { healthRouter } from './routes/health';
 import contractsModuleRouter from './routes/contracts.routes';
 import reputationRouter from './routes/reputation.routes';
 import dependencyScanRouter from './routes/dependency-scan.routes';
 import { requestIdMiddleware } from './middleware/requestId';
+import { notFoundHandler, errorHandler } from './middleware/errorHandlers';
 
 interface AppFactoryOptions {
   includeTerminalHandlers?: boolean;
