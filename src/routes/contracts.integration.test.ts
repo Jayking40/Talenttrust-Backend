@@ -77,7 +77,7 @@ describe('Contracts Routes Integration Tests', () => {
     it('should handle service errors', async () => {
       (jest.spyOn(ContractsService.prototype, 'getAllContracts') as any).mockRejectedValue(new Error('Service error'));
 
-      const response = await request(app)
+      await request(app)
         .get('/api/v1/contracts')
         .set('Authorization', `Bearer ${clientToken}`)
         .expect(500);
@@ -366,7 +366,7 @@ describe('Contracts Routes Integration Tests', () => {
       jest.spyOn(ContractsService.prototype, 'getContractById').mockResolvedValue(mockContract as any);
       (jest.spyOn(ContractsService.prototype, 'deleteContract') as any).mockRejectedValue(new Error('Contract not found'));
 
-      const response = await request(app)
+      await request(app)
         .delete('/api/v1/contracts/550e8400-e29b-41d4-a716-446655440000')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(500);
