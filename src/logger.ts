@@ -19,6 +19,7 @@
  * stack is included to aid debugging.
  */
 
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /** Fields that every log record must carry. */
@@ -49,7 +50,7 @@ const SERVICE_NAME = 'talenttrust-backend';
  */
 function serializeError(err: Error): Record<string, unknown> {
   const obj: Record<string, unknown> = {
-    name: err.name,
+    type: err.name,
     message: err.message,
   };
   if (process.env.NODE_ENV !== 'production' && err.stack) {
@@ -71,6 +72,10 @@ const SENSITIVE_KEYS = new Set([
   'privatekey',
   'mnemonic',
   'seed',
+  'email',
+  'credit_card',
+  'ssn',
+  'api_key',
 ]);
 
 function sanitize(obj: Record<string, unknown>): Record<string, unknown> {
@@ -88,13 +93,22 @@ function sanitize(obj: Record<string, unknown>): Record<string, unknown> {
 }
 
 /** Core write function – separated so tests can spy on it. */
-export function writeRecord(record: LogRecord): void {
+let writeRecordImpl: (record: LogRecord) => void = (record: LogRecord): void => {
   const line = JSON.stringify(record);
   if (record.level === 'error') {
     process.stderr.write(line + '\n');
   } else {
     process.stdout.write(line + '\n');
   }
+};
+
+export function writeRecord(record: LogRecord): void {
+  writeRecordImpl(record);
+}
+
+/** Test helper to override the write implementation */
+export function setWriteRecordImpl(impl: (record: LogRecord) => void): void {
+  writeRecordImpl = impl;
 }
 
 /**
@@ -141,6 +155,13 @@ export class Logger {
       ...merged,
     };
 
+    // Remove undefined properties to match expected behavior
+    Object.keys(record).forEach(key => {
+      if (record[key as keyof LogRecord] === undefined) {
+        delete record[key as keyof LogRecord];
+      }
+    });
+
     writeRecord(record);
   }
 
@@ -175,4 +196,12 @@ export const logger = new Logger();
 /** Factory for creating named loggers with pre-bound context. */
 export function createLogger(context: LogContext = {}): Logger {
   return new Logger(context);
+}
+
+/**
+ * Utility function to create a request-scoped logger with correlation IDs.
+ * This is typically used in middleware.
+ */
+export function createRequestLogger(requestId: string, correlationId?: string): Logger {
+  return createLogger({ requestId, correlationId });
 }
