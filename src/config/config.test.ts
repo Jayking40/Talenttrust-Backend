@@ -14,6 +14,7 @@ const CONFIG_ENV_KEYS = [
   'STELLAR_NETWORK_PASSPHRASE',
   'SOROBAN_RPC_URL',
   'SOROBAN_CONTRACT_ID',
+  'ALLOWED_ASSETS',
 ];
 
 function clearConfigEnvVars(): void {
@@ -238,6 +239,48 @@ describe('loadConfig (appConfiguration)', () => {
     const cfg = loadConfig();
     expect(cfg.port).toBe(3001);
     expect(cfg.upstreamContractsUrl).toBe('https://example.invalid/contracts');
+  });
+
+  describe('allowedAssets', () => {
+    beforeEach(() => {
+      clearConfigEnvVars();
+      delete process.env.ALLOWED_ASSETS;
+    });
+
+    it('returns default assets when ALLOWED_ASSETS is not set', () => {
+      const cfg = loadConfig({});
+      expect(cfg.allowedAssets).toEqual(['USDC', 'XLM', 'BTC', 'ETH']);
+    });
+
+    it('parses a comma-separated list from ALLOWED_ASSETS', () => {
+      const cfg = loadConfig({ ALLOWED_ASSETS: 'USDC,XLM' });
+      expect(cfg.allowedAssets).toEqual(['USDC', 'XLM']);
+    });
+
+    it('normalises asset codes to uppercase', () => {
+      const cfg = loadConfig({ ALLOWED_ASSETS: 'usdc,xlm,eth' });
+      expect(cfg.allowedAssets).toEqual(['USDC', 'XLM', 'ETH']);
+    });
+
+    it('trims whitespace from each asset code', () => {
+      const cfg = loadConfig({ ALLOWED_ASSETS: ' USDC , XLM ' });
+      expect(cfg.allowedAssets).toEqual(['USDC', 'XLM']);
+    });
+
+    it('filters out empty segments from ALLOWED_ASSETS', () => {
+      const cfg = loadConfig({ ALLOWED_ASSETS: 'USDC,,XLM,' });
+      expect(cfg.allowedAssets).toEqual(['USDC', 'XLM']);
+    });
+
+    it('returns a single-element list when one asset is provided', () => {
+      const cfg = loadConfig({ ALLOWED_ASSETS: 'USDC' });
+      expect(cfg.allowedAssets).toEqual(['USDC']);
+    });
+
+    it('returns default assets when ALLOWED_ASSETS is an empty string', () => {
+      const cfg = loadConfig({ ALLOWED_ASSETS: '' });
+      expect(cfg.allowedAssets).toEqual(['USDC', 'XLM', 'BTC', 'ETH']);
+    });
   });
 });
 

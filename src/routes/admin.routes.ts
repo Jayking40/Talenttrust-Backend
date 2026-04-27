@@ -8,7 +8,7 @@
  */
 
 import { Router, Response } from 'express';
-import { QueueManager } from '../queue';
+import { QueueManager, getWebhookDLQStorage } from '../queue';
 import { requireAuth, requireRole } from '../middleware/authorization';
 import { circuitBreakerRegistry } from '../circuit-breaker/registry';
 

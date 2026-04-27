@@ -18,7 +18,9 @@ import { healthRouter } from './routes/health';
 import contractsModuleRouter from './routes/contracts.routes';
 
 import reputationRouter from './routes/reputation.routes';
+import configRouter from './routes/config.routes';
 import dependencyScanRouter from './routes/dependency-scan.routes';
+import { adminRouter } from './routes/admin.routes';
 import { requestIdMiddleware } from './middleware/requestId';
 import { applySecurityMiddleware } from './middleware/security';
 import { MetricsService } from './observability/metrics-service';
@@ -43,9 +45,8 @@ export function attachTerminalHandlers(app: express.Application): void {
  *
  * @returns Configured Express app instance (not yet listening).
  */
-export function createApp(options: AppFactoryOptions = {}): express.Application {
+export function createApp(): express.Application {
   const app = express();
-  const { includeTerminalHandlers = true } = options;
 
   // ── Security Middleware ───────────────────────────────────────────────────
   applySecurityMiddleware(app);
@@ -54,8 +55,11 @@ export function createApp(options: AppFactoryOptions = {}): express.Application 
     process.env['SERVICE_NAME'] ?? 'talenttrust-backend',
   );
 
+  rateLimitStore = new RateLimitStore({ sweepIntervalMs: 60_000 });
+
   // ── Middleware ────────────────────────────────────────────────────────────
   app.use(express.json());
+  app.use(requestLimitsMiddleware);
   app.use(requestIdMiddleware);
   app.use(metricsService.trackHttpRequest.bind(metricsService));
 
@@ -66,19 +70,25 @@ export function createApp(options: AppFactoryOptions = {}): express.Application 
 
   // ── Routes ────────────────────────────────────────────────────────────────
   app.use('/health', healthRouter);
+  app.use('/api/config', configRouter);
   app.use('/api/v1/contracts', contractsModuleRouter);
   app.use('/api/v1/reputation', reputationRouter);
   app.use('/api/v1/dependency-scan', dependencyScanRouter);
+  app.use('/api/v1/admin', adminRouter);
 
-  if (includeTerminalHandlers) {
-    attachTerminalHandlers(app);
-  }
+  // ── 404 handler ──────────────────────────────────────────────────────────
+  app.use(notFoundHandler);
+
+  // ── Global error handler ─────────────────────────────────────────────────
+  app.use(errorHandler);
 
   return app;
 }
 
 /** Shutdown handler for graceful termination. */
 export function shutdownRateLimitStore(): void {
-  rateLimitStore.destroy();
-  console.log('[rateLimit] Store shutdown complete');
+  if (rateLimitStore) {
+    rateLimitStore.destroy();
+    console.log('[rateLimit] Store shutdown complete');
+  }
 }
