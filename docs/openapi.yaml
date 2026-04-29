@@ -246,6 +246,69 @@ paths:
                   service:
                     type: string
                     example: talenttrust-backend
+  /audit/export:
+    get:
+      summary: Export audit logs
+      description: Streams a filtered NDJSON audit export as a downloadable attachment for compliance workflows.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [INFO, WARNING, CRITICAL]
+        - name: actor
+          in: query
+          schema:
+            type: string
+        - name: resource
+          in: query
+          schema:
+            type: string
+        - name: resourceId
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: NDJSON export stream
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '429':
+          description: Rate limited
 
 components:
   securitySchemes:

@@ -2,7 +2,7 @@ import type { Action, Permission, Resource, Role, User } from "./types";
 
 // ─── Role allowlist ───────────────────────────────────────────────────────────
 
-const ALL_ROLES: ReadonlySet<string> = new Set<Role>(["admin", "client", "freelancer"]);
+const ALL_ROLES: ReadonlySet<string> = new Set<Role>(["admin", "auditor", "client", "freelancer"]);
 
 /**
  * Type-guard / validator for role claim values coming out of a JWT.

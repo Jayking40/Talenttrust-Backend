@@ -15,7 +15,7 @@
  *   create, read, update, delete
  */
 
-export type Role = 'admin' | 'freelancer' | 'client' | 'guest';
+export type Role = 'admin' | 'auditor' | 'freelancer' | 'client' | 'guest';
 
 export type Resource = 'contracts' | 'users' | 'reputation' | 'disputes' | 'health' | 'api-keys';
 
@@ -33,6 +33,9 @@ export const ACCESS_CONTROL_MATRIX: Record<Role, Partial<Record<Resource, Action
     disputes: ['create', 'read', 'update', 'delete'],
     health: ['read'],
     'api-keys': ['create', 'read', 'update', 'delete'],
+  },
+  auditor: {
+    health: ['read'],
   },
   freelancer: {
     contracts: ['create', 'read'],
@@ -56,4 +59,4 @@ export const ACCESS_CONTROL_MATRIX: Record<Role, Partial<Record<Resource, Action
 };
 
 /** All valid roles in the system. */
-export const VALID_ROLES: readonly Role[] = ['admin', 'freelancer', 'client', 'guest'] as const;
+export const VALID_ROLES: readonly Role[] = ['admin', 'auditor', 'freelancer', 'client', 'guest'] as const;

@@ -134,7 +134,7 @@ if (!report.valid) {
 
 All endpoints are mounted at `/api/v1/audit`.
 
-> **Security**: These endpoints must be protected by authentication and restricted to `admin`/`auditor` roles in production.
+> **Security**: These endpoints are protected by JWT authentication and restricted to `admin`/`auditor` roles in the main application.
 
 ### `GET /api/v1/audit`
 
@@ -183,8 +183,17 @@ Retrieve a single entry by UUID. Returns `404` if not found.
 
 ### `GET /api/v1/audit/export`
 
-Stream entries as newline-delimited JSON (`application/x-ndjson`) for export use cases.
-This endpoint uses repository streaming to avoid loading all rows in memory.
+Generate a file-backed newline-delimited JSON (`application/x-ndjson`) export and
+stream it back as an attachment for compliance downloads.
+
+Security and operational notes:
+
+- Access is limited to `admin` and `auditor` roles.
+- A dedicated export rate limit applies separately from standard API reads.
+- The export file is created only inside a controlled local temp directory.
+- No user-supplied path or URL is ever dereferenced, preventing path traversal and SSRF.
+- Export filters match the query endpoint (`action`, `severity`, `actor`, `resource`, `resourceId`, `from`, `to`, `limit`, `offset`).
+- Export requests support larger result sets than the interactive query endpoint, up to the configured export cap.
 
 ---
 
@@ -330,7 +339,8 @@ Numbers, booleans, and `null`/`undefined` pass through unmodified.
 - [x] Repository pattern implemented with pluggable backends (`memory`, `sqlite`)
 - [x] Durable SQLite backend available via `AUDIT_STORAGE_BACKEND=sqlite`
 - [ ] For production, use a write-once policy (no `UPDATE`/`DELETE` grants) and strict file/database access controls
-- [ ] Gate `/api/v1/audit` endpoints behind JWT authentication + `auditor` role check
+- [x] Gate `/api/v1/audit` endpoints behind JWT authentication + `admin`/`auditor` role check
+- [x] Rate-limit `/api/v1/audit/export` separately from standard API traffic
 - [ ] Rate-limit the `/integrity` endpoint (it scans the full log)
 - [ ] Run `verifyIntegrity()` on a scheduled job and alert on failure
 - [ ] Ensure `app.set('trust proxy', true)` is set when behind a load balancer so `req.ip` is accurate

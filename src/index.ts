@@ -11,9 +11,11 @@ import { createApp, attachTerminalHandlers, shutdownRateLimitStore } from './app
 import { JobType, JobPayload, QueueManager, AddJobOptions } from './queue';
 import { authMiddleware, AuthenticatedRequest } from './middleware/auth';
 import { auditService } from './audit/service';
+import { createAuditRouter } from './audit/router';
 import { validateEnvironment } from './config/environment';
 import { createRateLimiter } from './middleware/rateLimiter';
 import { rateLimitConfig } from './config/rateLimit';
+import { requireAuth, requireRole } from './middleware/authorization';
 
 // Validate environment at startup
 // validateEnvironment(); // Commented out for now - will fix later
@@ -21,6 +23,20 @@ import { rateLimitConfig } from './config/rateLimit';
 const queueManager = QueueManager.getInstance();
 
 const app = createApp({ includeTerminalHandlers: false });
+
+const auditExportLimiter = createRateLimiter({
+  ...rateLimitConfig.auditExport,
+  keyFn: (req) => {
+    const authReq = req as typeof req & { user?: { id?: string } };
+    const actor = authReq.user?.id ?? 'anonymous';
+    return `audit-export:${actor}:${req.ip ?? req.socket.remoteAddress ?? 'unknown'}`;
+  },
+});
+
+app.use('/api/v1/audit', createAuditRouter({
+  accessMiddleware: [requireAuth, requireRole('admin', 'auditor')],
+  exportMiddleware: [auditExportLimiter],
+}));
 
 // Initialize Event Ingestion Services
 const auditRepository = new InMemoryEventAuditRepository();

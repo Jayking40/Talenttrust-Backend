@@ -123,10 +123,9 @@ export class AuditStore implements AuditLogRepository {
    * @returns Matching entries in insertion order.
    */
   query(query: AuditQuery = {}): AuditEntry[] {
-    const limit = Math.min(query.limit ?? 100, 1000);
     const offset = Math.max(query.offset ?? 0, 0);
 
-    let results = this.log.filter((entry) => {
+    const results = this.log.filter((entry) => {
       if (query.action && entry.action !== query.action) return false;
       if (query.severity && entry.severity !== query.severity) return false;
       if (query.actor && entry.actor !== query.actor) return false;
@@ -137,6 +136,11 @@ export class AuditStore implements AuditLogRepository {
       return true;
     });
 
+    if (query.limit === undefined) {
+      return results.slice(offset);
+    }
+
+    const limit = Math.max(query.limit, 0);
     return results.slice(offset, offset + limit);
   }
 

@@ -115,6 +115,21 @@ export const rateLimitConfig = {
     sendHeaders: true,
     ...sharedStore,
   } satisfies RateLimiterConfig,
+
+  /**
+   * Audit export tier: compliance downloads and bulk exports.
+   * Kept intentionally low because each request can generate and stream a file.
+   */
+  auditExport: {
+    maxRequests: toCount(process.env.RL_AUDIT_EXPORT_MAX, 5),
+    windowMs: toMs(process.env.RL_AUDIT_EXPORT_WINDOW_MS, 3_600_000),
+    abuseThreshold: toCount(process.env.RL_AUDIT_EXPORT_ABUSE_THRESHOLD, 3),
+    blockWindowMs: toMs(process.env.RL_AUDIT_EXPORT_BLOCK_WINDOW_MS, 21_600_000),
+    blockDurationMs: toMs(process.env.RL_AUDIT_EXPORT_BLOCK_DURATION_MS, 3_600_000),
+    maxBlockDurationMs: toMs(process.env.RL_AUDIT_EXPORT_MAX_BLOCK_MS, 86_400_000),
+    sendHeaders: true,
+    ...sharedStore,
+  } satisfies RateLimiterConfig,
 };
 
 export type RateLimitTier = keyof typeof rateLimitConfig;

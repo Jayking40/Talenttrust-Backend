@@ -235,19 +235,25 @@ export class SqliteAuditRepository implements AuditLogRepository {
       params.push(query.to);
     }
 
-    const limit = Math.min(query.limit ?? 100, 1000);
     const offset = Math.max(query.offset ?? 0, 0);
-
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    let paginationClause = '';
+    if (query.limit !== undefined) {
+      paginationClause = 'LIMIT ? OFFSET ?';
+      params.push(Math.max(query.limit, 0), offset);
+    } else if (offset > 0) {
+      paginationClause = 'LIMIT -1 OFFSET ?';
+      params.push(offset);
+    }
+
     const sql = `
       SELECT id, timestamp, action, severity, actor, resource, resource_id, metadata_json, ip_address, correlation_id, hash, previous_hash
       FROM audit_log_entries
       ${whereClause}
       ORDER BY seq ASC
-      LIMIT ? OFFSET ?
+      ${paginationClause}
     `;
-
-    params.push(limit, offset);
     return { sql, params };
   }
 }
