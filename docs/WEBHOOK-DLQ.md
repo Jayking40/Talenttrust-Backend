@@ -144,13 +144,6 @@ class WebhookDeliveryService implements DrainableWebhookService {
 
 ---
 
-## Environment Variables
-
-| Variable                   | Default                    | Description                                                                                   |
-|----------------------------|----------------------------|-----------------------------------------------------------------------------------------------|
-| `WEBHOOK_DLQ_PATH`         | `./data/webhook-dlq.db`    | SQLite DB path for DLQ storage.                                                               |
-| `WEBHOOK_DRAIN_TIMEOUT_MS` | `30000`                    | Grace period (ms) for in-flight webhook deliveries to finish before force-flushing to DLQ.   |
-
-Set `WEBHOOK_DRAIN_TIMEOUT_MS` to a value that comfortably covers your p99
-webhook delivery latency.  Values below 5 000 ms are not recommended in
-production because transient network latency can cause unnecessary DLQ entries.
+| Variable | Description | Default |
+|----------|-------------|---------|
+| WEBHOOK_DLQ_PATH | SQLite DB path | `./data/webhook-dlq.db` |
