@@ -11,7 +11,6 @@ module.exports = {
     'tests/load',
     'tests/stress',
     'webhook.service.test.ts',
-    'webhookDelivery.test.ts',
     'reputation-scheduler.service.test.ts',
     'occ.integration.test.ts',
     'deployment/integration.test.ts',
