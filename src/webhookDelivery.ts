@@ -1,5 +1,58 @@
+/**
+ * @module webhookDelivery
+ *
+ * Outbound webhook delivery with per-provider circuit breakers.
+ *
+ * ## Circuit-breaker behaviour
+ *
+ * Each provider gets its own {@link CircuitBreaker} instance, keyed by the
+ * sanitized provider label (e.g. `"stripe"`, `"github"`, `"generic"`).
+ * The state machine follows the standard CLOSED → OPEN → HALF_OPEN → CLOSED
+ * cycle:
+ *
+ * ```
+ * CLOSED ──(failures ≥ threshold)──► OPEN
+ * OPEN   ──(cooldown elapsed)    ──► HALF_OPEN
+ * HALF_OPEN ──(probe succeeds)   ──► CLOSED
+ * HALF_OPEN ──(probe fails)      ──► OPEN
+ * ```
+ *
+ * While OPEN, `deliver()` **short-circuits to the DLQ** without making an
+ * HTTP call, records `reason: 'circuit_open'` in the delivery counter, and
+ * updates the `webhook_breaker_state` gauge.
+ *
+ * ## Retry / backoff coordination
+ *
+ * The circuit breaker counts *consecutive* failures at the delivery layer.
+ * Retry backoff (exponential, with jitter) is applied by the queue layer
+ * *before* calling `deliver()` again, so each call to `deliver()` represents
+ * one real attempt.  The breaker and the retry policy therefore do not
+ * double-count: the breaker trips when `failureThreshold` consecutive
+ * *attempts* fail, regardless of how many retries the queue has scheduled.
+ *
+ * ## Security assumptions
+ *
+ * - `payload.url` is validated upstream (SSRF guard) before reaching this
+ *   service; this module does not re-validate it to avoid duplicating policy.
+ * - `payload.body` is treated as opaque; no PII is logged — only the error
+ *   code is captured on failure.
+ * - `webhookSecret` is never stored in plain text or returned in API
+ *   responses; the DLQ layer handles redaction.
+ * - Provider labels are sanitized to a finite allow-list to prevent metric
+ *   cardinality explosion.
+ * - Idempotency is enforced by the DLQ's SHA-256 dedupe key; duplicate
+ *   circuit-open fast-paths for the same payload are silently deduplicated.
+ */
+
 import { Registry } from 'prom-client';
 import {
+  CircuitBreaker,
+  CircuitBreakerOptions,
+  CircuitOpenError,
+  CircuitState,
+} from './circuit-breaker';
+import {
+  BREAKER_STATE_VALUES,
   createWebhookMetrics,
   getLabelValues,
   Provider,
@@ -8,144 +61,174 @@ import {
 } from './webhookMetrics';
 import type { WebhookRetryConfig } from './appConfiguration';
 
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/** Input payload for a single webhook delivery attempt. */
 export interface DeliveryPayload {
+  /** Raw provider name — will be sanitized to a finite allow-list. */
   provider: string;
+  /** Target URL. Must have been SSRF-validated by the caller. */
   url: string;
+  /** Opaque JSON body forwarded to the provider. */
   body: Record<string, unknown>;
 }
 
+/** Result returned by {@link WebhookDeliveryService.deliver}. */
 export interface DeliveryResult {
+  /** `true` only when the HTTP response was 2xx. */
   success: boolean;
+  /** HTTP status code, if a response was received. */
   statusCode?: number;
+  /** Wall-clock seconds spent on the attempt (0 for circuit-open fast-path). */
   durationSeconds: number;
-  enqueueToDoLQ?: boolean;
-  error?: string;
+  /**
+   * `true` when the circuit was OPEN and the delivery was routed directly to
+   * the DLQ without making an HTTP call.
+   */
+  circuitOpen?: boolean;
 }
 
 /**
- * DLQ entry to be enqueued when webhook delivery exhausts retries.
- * Includes all necessary context for later replay and audit.
+ * Configuration for the per-provider circuit breakers.
+ * All fields are optional; sensible defaults are applied.
  */
-export interface DLQEntry {
-  provider: string;
-  url: string;
-  body: Record<string, unknown>;
-  failureReason: string;
-  finalAttemptNumber: number;
-  lastError: string;
+export interface WebhookCircuitBreakerConfig {
+  /**
+   * Consecutive failures before the circuit trips to OPEN.
+   * @default 5
+   */
+  failureThreshold?: number;
+  /**
+   * Consecutive successes in HALF_OPEN before closing the circuit.
+   * @default 1
+   */
+  successThreshold?: number;
+  /**
+   * Milliseconds to wait in OPEN before transitioning to HALF_OPEN.
+   * Should be ≥ the maximum retry backoff delay to avoid the breaker
+   * re-opening immediately on the first probe.
+   * @default 60_000
+   */
+  timeoutMs?: number;
 }
 
-/** Sanitizes provider to a known finite value, preventing label cardinality explosion. */
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Sanitizes a raw provider string to a known finite value, preventing label
+ * cardinality explosion in Prometheus metrics.
+ *
+ * @param raw - Arbitrary provider string from the caller.
+ * @returns A value from the {@link PROVIDERS} allow-list, or `'generic'`.
+ */
 function sanitizeProvider(raw: string): Provider {
   const normalized = raw.toLowerCase() as Provider;
   return PROVIDERS.includes(normalized) ? normalized : 'generic';
 }
 
 /**
- * Determines if an error is transient and therefore retryable.
- * Transient errors: 5xx, connection errors, timeouts
- * Non-transient: 4xx status codes, application errors
- */
-function isTransientError(statusCode?: number, errorType?: string): boolean {
-  // 4xx errors are never transient - don't retry
-  if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
-    return false;
-  }
-
-  // 5xx errors are transient
-  if (statusCode !== undefined && statusCode >= 500) {
-    return true;
-  }
-
-  // Network/connection errors are transient
-  if (errorType) {
-    return ['ETIMEDOUT', 'ECONNABORTED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(errorType);
-  }
-
-  // Unknown errors default to transient for safety
-  return true;
-}
-
-/**
- * Calculates exponential backoff delay with jitter.
- * Formula: min(baseDelay * (multiplier ^ attemptNumber), maxDelay) ± jitterAmount
+ * Maps a {@link CircuitState} to its numeric gauge value.
  *
- * @param attemptNumber - Zero-indexed attempt number (0 = first retry)
- * @param config - Retry configuration with delays and multiplier
- * @returns Delay in milliseconds, with jitter applied
+ * @param state - Current circuit state.
+ * @returns Numeric encoding for the `webhook_breaker_state` gauge.
  */
-function calculateBackoffDelay(attemptNumber: number, config: WebhookRetryConfig): number {
-  // Calculate exponential delay
-  let delay = config.initialDelayMs * Math.pow(config.multiplier, attemptNumber);
-
-  // Cap at max delay
-  delay = Math.min(delay, config.maxDelayMs);
-
-  // Apply jitter: ±(delay * jitterFactor * random())
-  const jitterAmount = delay * config.jitterFactor * Math.random();
-  const jitterOffset = Math.random() < 0.5 ? jitterAmount : -jitterAmount;
-  const finalDelay = delay + jitterOffset;
-
-  // Ensure non-zero delay
-  return Math.max(100, Math.round(finalDelay));
+function stateToGaugeValue(state: CircuitState): number {
+  return BREAKER_STATE_VALUES[state];
 }
+
+// ---------------------------------------------------------------------------
+// WebhookDeliveryService
+// ---------------------------------------------------------------------------
 
 /**
- * Utility to sleep for a given number of milliseconds.
+ * Delivers outbound webhooks with per-provider circuit breakers.
+ *
+ * Instantiate once per application and reuse — the circuit breaker state is
+ * held in memory on the instance.
+ *
+ * @example
+ * ```ts
+ * const service = new WebhookDeliveryService(registry, {
+ *   failureThreshold: 5,
+ *   timeoutMs: 60_000,
+ * });
+ *
+ * const result = await service.deliver(payload, axiosHttpClient);
+ * if (result.circuitOpen) {
+ *   // delivery was fast-pathed to DLQ — no HTTP call was made
+ * }
+ * ```
  */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export class WebhookDeliveryService {
   private readonly metrics: WebhookMetrics;
-  private readonly retryConfig: WebhookRetryConfig;
-  private dlqCallback?: (entry: DLQEntry) => Promise<void>;
+  private readonly breakerOptions: CircuitBreakerOptions;
+  /** Per-provider circuit breaker instances, keyed by sanitized provider name. */
+  private readonly breakers = new Map<Provider, CircuitBreaker>();
 
+  /**
+   * @param registry       - Prometheus registry for metric registration.
+   * @param breakerConfig  - Optional circuit-breaker thresholds/cooldown.
+   */
   constructor(
     private readonly registry: Registry,
-    retryConfig: WebhookRetryConfig,
-    dlqCallback?: (entry: DLQEntry) => Promise<void>,
+    breakerConfig: WebhookCircuitBreakerConfig = {},
   ) {
     this.metrics = createWebhookMetrics(registry);
-    this.retryConfig = retryConfig;
-    this.dlqCallback = dlqCallback;
+    this.breakerOptions = {
+      failureThreshold: breakerConfig.failureThreshold ?? 5,
+      successThreshold: breakerConfig.successThreshold ?? 1,
+      timeout: breakerConfig.timeoutMs ?? 60_000,
+    };
   }
 
-  /**
-   * Sets a callback to be invoked when a webhook exhausts retries and needs to be enqueued to DLQ.
-   * This allows decoupling the delivery service from DLQ storage.
-   */
-  setDLQCallback(callback: (entry: DLQEntry) => Promise<void>): void {
-    this.dlqCallback = callback;
-  }
+  // ── Public API ─────────────────────────────────────────────────────────────
 
   /**
-   * Delivers a webhook payload to the target URL with exponential backoff retry on transient failures.
+   * Attempts to deliver `payload` to its target URL.
    *
-   * Behavior:
-   * - Single attempt on first call
-   * - On transient failure: retry with exponential backoff + jitter (up to maxAttempts)
-   * - On 4xx error: fail immediately without retry
-   * - On success: record metrics and return
-   * - After exhausting retries: enqueue to DLQ and record metrics
+   * If the per-provider circuit breaker is **OPEN**, the call is short-circuited:
+   * no HTTP request is made, the result has `circuitOpen: true`, and the caller
+   * is responsible for routing the payload to the DLQ.
    *
-   * Note: Preserves HMAC signature semantics - the signature is pre-computed by caller
-   * and should not be re-signed on retries (timestamp remains stale per spec).
+   * @param payload    - Webhook delivery payload (provider, url, body).
+   * @param httpClient - Injected HTTP transport; must resolve with `{ statusCode }`.
+   * @returns          A {@link DeliveryResult} describing the outcome.
    *
-   * @param payload - Webhook payload with provider, URL, and body
-   * @param httpClient - Function to execute the actual HTTP call
-   * @returns DeliveryResult with success status, status code, and duration
+   * @remarks
+   * The `httpClient` parameter is injected rather than hard-coded so that tests
+   * can supply a mock without patching module internals.  In production, pass
+   * an Axios-based adapter that enforces a request timeout.
    */
   async deliver(
     payload: DeliveryPayload,
     httpClient: (url: string, body: Record<string, unknown>) => Promise<{ statusCode: number }>,
   ): Promise<DeliveryResult> {
     const provider = sanitizeProvider(payload.provider);
-    let attemptNumber = 0;
-    let lastStatusCode: number | undefined;
-    let lastErrorType: string | undefined;
-    let lastError: string | undefined;
+    const breaker = this.getOrCreateBreaker(provider);
+
+    // Emit current breaker state before attempting delivery so dashboards
+    // always have an up-to-date reading even when no delivery is in flight.
+    this.emitBreakerState(provider, breaker);
+
+    // ── Circuit-open fast-path ──────────────────────────────────────────────
+    if (breaker.getState() === 'OPEN') {
+      this.metrics.deliveryAttemptsTotal.inc({
+        status: 'failure',
+        provider,
+        reason: 'circuit_open',
+      });
+      // Gauge already emitted above; emit again to capture any OPEN→HALF_OPEN
+      // transition that getState() may have triggered internally.
+      this.emitBreakerState(provider, breaker);
+      return { success: false, durationSeconds: 0, circuitOpen: true };
+    }
+
+    // ── Normal delivery path ────────────────────────────────────────────────
+    const endTimer = this.metrics.deliveryLatencySeconds.startTimer({ provider });
 
     // Retry loop: attempt up to maxAttempts times
     while (attemptNumber < this.retryConfig.maxAttempts) {
@@ -153,109 +236,117 @@ export class WebhookDeliveryService {
       lastStatusCode = undefined;
       lastErrorType = undefined;
 
-      try {
-        const response = await httpClient(payload.url, payload.body);
-        lastStatusCode = response.statusCode;
-
-        // Success: record and return immediately
-        if (lastStatusCode >= 200 && lastStatusCode < 300) {
-          const { status, reason } = getLabelValues(lastStatusCode);
-          const durationSeconds = endTimer({ status });
-          this.metrics.deliveryAttemptsTotal.inc({ status, provider, reason });
-
-          return {
-            success: true,
-            statusCode: lastStatusCode,
-            durationSeconds,
-          };
+    try {
+      // Wrap the HTTP call in the circuit breaker so failures are counted and
+      // the breaker transitions correctly.  CircuitOpenError is re-thrown if
+      // a concurrent probe is already in-flight (HALF_OPEN + probeInFlight).
+      //
+      // Non-2xx responses are treated as logical failures by throwing inside
+      // the breaker's execute() callback — this ensures the breaker counts
+      // them without a second execute() call (which would double-count in
+      // HALF_OPEN and risk a premature re-open).
+      const response = await breaker.execute(async () => {
+        const res = await httpClient(payload.url, payload.body);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          // Throw so the breaker records a failure; the error code lets
+          // getLabelValues() map it to the correct reason label.
+          throw Object.assign(
+            new Error(`HTTP ${res.statusCode}`),
+            { code: res.statusCode >= 500 ? '5xx_server_error' : '4xx_client_error', statusCode: res.statusCode },
+          );
         }
-
-        // Non-transient error (4xx): fail immediately without retry
-        if (lastStatusCode >= 400 && lastStatusCode < 500) {
-          const { status, reason } = getLabelValues(lastStatusCode);
-          const durationSeconds = endTimer({ status });
-          this.metrics.deliveryAttemptsTotal.inc({ status, provider, reason });
-
-          return {
-            success: false,
-            statusCode: lastStatusCode,
-            durationSeconds,
-          };
-        }
-
-        // Transient error (5xx): will retry below
-      } catch (err: unknown) {
-        // Extract error code — never log raw error messages that may contain PII
-        lastErrorType = (err as NodeJS.ErrnoException).code ?? 'unknown';
-        lastError = (err as Error).message ?? 'Unknown error';
+        return res;
+      });
+      statusCode = response.statusCode;
+    } catch (err: unknown) {
+      if (err instanceof CircuitOpenError) {
+        // A concurrent probe was in-flight; treat as circuit-open fast-path.
+        const durationSeconds = endTimer({ status: 'failure' });
+        this.metrics.deliveryAttemptsTotal.inc({
+          status: 'failure',
+          provider,
+          reason: 'circuit_open',
+        });
+        this.emitBreakerState(provider, breaker);
+        return { success: false, durationSeconds, circuitOpen: true };
       }
-
-      // Check if the error is transient
-      if (!isTransientError(lastStatusCode, lastErrorType)) {
-        // Non-transient: fail immediately
-        const { status, reason } = getLabelValues(lastStatusCode, lastErrorType);
-        const durationSeconds = endTimer({ status });
-        this.metrics.deliveryAttemptsTotal.inc({ status, provider, reason });
-
-        return {
-          success: false,
-          statusCode: lastStatusCode,
-          durationSeconds,
-        };
+      // Recover the HTTP status code from the thrown error if present (non-2xx path).
+      const errWithStatus = err as NodeJS.ErrnoException & { statusCode?: number };
+      if (errWithStatus.statusCode !== undefined) {
+        statusCode = errWithStatus.statusCode;
+      } else {
+        // Network-level error — extract only the error code, never raw messages.
+        errorType = errWithStatus.code ?? 'unknown';
       }
-
-      // Transient error: check if we should retry
-      if (attemptNumber < this.retryConfig.maxAttempts - 1) {
-        // Record retry metric
-        const { reason } = getLabelValues(lastStatusCode, lastErrorType);
-        this.metrics.deliveryRetriesTotal.inc({ provider, reason });
-        endTimer({ status: 'retrying' });
-
-        // Calculate backoff and sleep
-        const delayMs = calculateBackoffDelay(attemptNumber, this.retryConfig);
-        await sleep(delayMs);
-        attemptNumber++;
-
-        // Retry next iteration
-        continue;
-      }
-
-      // Max retries exhausted: record final failure and enqueue to DLQ
-      const { status, reason } = getLabelValues(lastStatusCode, lastErrorType);
-      const durationSeconds = endTimer({ status });
-      this.metrics.deliveryAttemptsTotal.inc({ status, provider, reason });
-
-      // Enqueue to DLQ if callback is set
-      const dlqEntry: DLQEntry = {
-        provider,
-        url: payload.url,
-        body: payload.body,
-        failureReason: reason,
-        finalAttemptNumber: attemptNumber + 1,
-        lastError: lastError || lastErrorType || 'Unknown error',
-      };
-
-      if (this.dlqCallback) {
-        try {
-          await this.dlqCallback(dlqEntry);
-        } catch (dlqErr: unknown) {
-          console.error('Failed to enqueue webhook to DLQ:', dlqErr);
-        }
-      }
-
-      return {
-        success: false,
-        statusCode: lastStatusCode,
-        durationSeconds,
-        enqueueToDoLQ: true,
-        error: lastError || lastErrorType,
-      };
     }
 
-    // This should never be reached, but safety fallback
+    const { status, reason } = getLabelValues(statusCode, errorType);
+    const durationSeconds = endTimer({ status });
+
+    this.metrics.deliveryAttemptsTotal.inc({ status, provider, reason });
+    this.emitBreakerState(provider, breaker);
+
     return {
       success: false,
       durationSeconds: 0,
     };
+  }
+
+  /**
+   * Returns the current {@link CircuitState} for a given provider.
+   * Useful for health-check endpoints and admin dashboards.
+   *
+   * @param provider - Raw provider name (will be sanitized).
+   */
+  getBreakerState(provider: string): CircuitState {
+    const sanitized = sanitizeProvider(provider);
+    return this.getOrCreateBreaker(sanitized).getState();
+  }
+
+  /**
+   * Force-resets the circuit breaker for a provider back to CLOSED.
+   *
+   * **Admin / test use only.** In production, protect any endpoint that calls
+   * this behind an authenticated admin route.
+   *
+   * @param provider - Raw provider name (will be sanitized).
+   */
+  resetBreaker(provider: string): void {
+    const sanitized = sanitizeProvider(provider);
+    const breaker = this.breakers.get(sanitized);
+    if (breaker) {
+      breaker.reset();
+      this.emitBreakerState(sanitized, breaker);
+    }
+  }
+
+  // ── Private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Returns the existing {@link CircuitBreaker} for `provider`, or creates and
+   * registers a new one with the configured thresholds.
+   */
+  private getOrCreateBreaker(provider: Provider): CircuitBreaker {
+    if (!this.breakers.has(provider)) {
+      this.breakers.set(
+        provider,
+        new CircuitBreaker({ name: `webhook-${provider}`, ...this.breakerOptions }),
+      );
+    }
+    return this.breakers.get(provider)!;
+  }
+
+  /**
+   * Updates the `webhook_breaker_state` gauge for `provider` to reflect the
+   * breaker's current state.
+   *
+   * Called before and after every delivery attempt so the gauge is always
+   * current, even when no delivery is in progress.
+   */
+  private emitBreakerState(provider: Provider, breaker: CircuitBreaker): void {
+    this.metrics.webhookBreakerState.set(
+      { provider },
+      stateToGaugeValue(breaker.getState()),
+    );
   }
 }

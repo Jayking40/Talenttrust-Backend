@@ -196,6 +196,73 @@ interface WebhookDLQEntry {
 }
 ```
 
+## Circuit Breaker
+
+`WebhookDeliveryService` maintains a **per-provider circuit breaker** that
+prevents repeated HTTP calls to providers that are persistently down.  When a
+provider's breaker is OPEN, deliveries are routed directly to the DLQ without
+making a network request.
+
+### State machine
+
+```
+CLOSED ──(failures ≥ threshold)──► OPEN
+OPEN   ──(cooldown elapsed)    ──► HALF_OPEN
+HALF_OPEN ──(probe succeeds)   ──► CLOSED
+HALF_OPEN ──(probe fails)      ──► OPEN
+```
+
+| State      | Behaviour                                                                 |
+|------------|---------------------------------------------------------------------------|
+| `CLOSED`   | Normal delivery. Consecutive failures are counted.                        |
+| `OPEN`     | Fast-path: delivery is skipped, payload is routed to DLQ immediately.     |
+| `HALF_OPEN`| One probe attempt is allowed. Success → CLOSED, failure → OPEN.           |
+
+### Retry / backoff coordination
+
+The circuit breaker counts *consecutive* failures at the delivery layer.
+Retry backoff (exponential with jitter, see `src/queue/webhook-retry-policy.ts`)
+is applied by the queue layer *before* calling `deliver()` again.  Each call to
+`deliver()` therefore represents one real attempt — the breaker and the retry
+policy do not double-count.
+
+The recommended `WEBHOOK_CB_TIMEOUT_MS` value should be **≥ the maximum retry
+backoff delay** (default: 30 s) so the breaker does not re-open immediately on
+the first probe after cooldown.  The default cooldown is 60 s.
+
+### Configuration
+
+All thresholds are read from environment variables and validated/clamped at
+startup.  They are intentionally separate from the RPC circuit breaker
+(`CB_*`) so webhook and RPC failure modes can be tuned independently.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBHOOK_CB_FAILURE_THRESHOLD` | `5` | Consecutive failures before opening (1–100) |
+| `WEBHOOK_CB_SUCCESS_THRESHOLD` | `1` | Consecutive successes in HALF_OPEN before closing (1–20) |
+| `WEBHOOK_CB_TIMEOUT_MS` | `60000` | Cooldown ms before probing (1 000–300 000) |
+
+### Metrics
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `webhook_breaker_state` | `provider` | Current state: 0=CLOSED, 1=OPEN, 2=HALF_OPEN |
+| `webhook_delivery_attempts_total` | `status`, `provider`, `reason` | Includes `reason=circuit_open` for fast-path deliveries |
+
+Use `webhook_breaker_state` in Grafana dashboards and alerting rules to detect
+providers that are persistently down.
+
+### Security notes
+
+- Provider labels are sanitized to a finite allow-list (`stripe`, `github`,
+  `slack`, `sendgrid`, `generic`) to prevent metric cardinality explosion.
+- The `resetBreaker()` method is intended for admin use only; any API endpoint
+  that exposes it must be protected behind an authenticated admin route.
+- No PII or raw error messages are recorded in metrics — only the error code
+  (e.g. `ECONNREFUSED`) is captured.
+
+---
+
 ## Metrics
 
 DLQ operations are tracked via Prometheus counters in `webhookMetrics.ts`:
