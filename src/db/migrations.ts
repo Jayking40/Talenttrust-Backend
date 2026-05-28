@@ -1,9 +1,16 @@
+import { createHash } from "crypto";
 import Database from "better-sqlite3";
 
 export interface Migration {
   version: number;
   name: string;
   up: (db: Database.Database) => void;
+}
+
+interface AppliedMigration {
+  version: number;
+  name: string;
+  checksum: string | null;
 }
 
 const MIGRATIONS: Migration[] = [
@@ -65,34 +72,110 @@ function ensureMigrationTable(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS schema_version (
       version     INTEGER PRIMARY KEY,
       name        TEXT    NOT NULL,
+      checksum    TEXT,
       applied_at  TEXT    NOT NULL
     );
   `);
+
+  const columns = db.pragma("table_info(schema_version)") as Array<{ name: string }>;
+  const hasChecksum = columns.some((column) => column.name === "checksum");
+
+  if (!hasChecksum) {
+    db.exec("ALTER TABLE schema_version ADD COLUMN checksum TEXT");
+  }
 }
 
-function getAppliedVersions(db: Database.Database): Set<number> {
+function getAppliedMigrations(db: Database.Database): Map<number, AppliedMigration> {
   const rows = db
-    .prepare<[], { version: number }>(
-      "SELECT version FROM schema_version ORDER BY version ASC"
+    .prepare<[], AppliedMigration>(
+      "SELECT version, name, checksum FROM schema_version ORDER BY version ASC"
     )
     .all();
 
-  return new Set(rows.map((row) => row.version));
+  return new Map(rows.map((row) => [row.version, row]));
 }
 
 function assertMigrationsAreValid(migrations: Migration[]): void {
-  const sortedVersions = [...migrations.map((m) => m.version)].sort((a, b) => a - b);
-
-  for (let index = 0; index < sortedVersions.length; index += 1) {
+  for (let index = 0; index < migrations.length; index += 1) {
     const expectedVersion = index + 1;
-    if (sortedVersions[index] !== expectedVersion) {
+    const migration = migrations[index];
+
+    if (migration?.version !== expectedVersion) {
       throw new Error(
-        `Invalid migration sequence: expected version ${expectedVersion}, got ${sortedVersions[index]}`
+        `Invalid migration sequence: expected version ${expectedVersion}, got ${migration?.version}`
       );
     }
   }
 }
 
+/**
+ * Computes the immutable fingerprint stored for an applied migration.
+ *
+ * @param migration - Migration definition from the ordered migration list.
+ * @returns A SHA-256 checksum over version, name, and implementation body.
+ *
+ * @remarks
+ * Migration checksums intentionally include `up.toString()` so edits to an
+ * already-applied migration fail fast on the next database open. Add a new
+ * migration instead of changing an existing one.
+ */
+export function computeMigrationChecksum(migration: Migration): string {
+  return createHash("sha256")
+    .update(`${migration.version}\n${migration.name}\n${migration.up.toString()}`)
+    .digest("hex");
+}
+
+function verifyAppliedMigrations(
+  db: Database.Database,
+  appliedMigrations: Map<number, AppliedMigration>,
+  migrations: Migration[]
+): void {
+  const migrationsByVersion = new Map(migrations.map((migration) => [migration.version, migration]));
+
+  for (const applied of appliedMigrations.values()) {
+    const migration = migrationsByVersion.get(applied.version);
+
+    if (!migration) {
+      throw new Error(
+        `Applied migration ${applied.version} (${applied.name}) is not present in the migration list`
+      );
+    }
+
+    const expectedChecksum = computeMigrationChecksum(migration);
+
+    if (applied.name !== migration.name) {
+      throw new Error(
+        `Applied migration ${applied.version} name mismatch: expected ${migration.name}, got ${applied.name}`
+      );
+    }
+
+    if (applied.checksum === null) {
+      db.prepare<[string, number]>(
+        "UPDATE schema_version SET checksum = ? WHERE version = ?"
+      ).run(expectedChecksum, applied.version);
+      applied.checksum = expectedChecksum;
+    }
+
+    if (applied.checksum !== expectedChecksum) {
+      throw new Error(
+        `Applied migration ${applied.version} checksum mismatch; refusing to start`
+      );
+    }
+  }
+}
+
+/**
+ * Applies pending database migrations after verifying applied checksums.
+ *
+ * @param db - Open SQLite database handle.
+ * @param migrations - Ordered migration definitions, primarily overridden by tests.
+ *
+ * @remarks
+ * The database open path calls this synchronously before serving requests.
+ * Applied migrations are verified before pending migrations run. Each pending
+ * migration and its `schema_version` insert happen inside one SQLite
+ * transaction, so partial DDL/DML is rolled back if the migration throws.
+ */
 export function runMigrations(
   db: Database.Database,
   migrations: Migration[] = MIGRATIONS
@@ -100,13 +183,15 @@ export function runMigrations(
   assertMigrationsAreValid(migrations);
   ensureMigrationTable(db);
 
-  const appliedVersions = getAppliedVersions(db);
-  const insertApplied = db.prepare<[number, string, string]>(
-    "INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)"
+  const appliedMigrations = getAppliedMigrations(db);
+  verifyAppliedMigrations(db, appliedMigrations, migrations);
+
+  const insertApplied = db.prepare<[number, string, string, string]>(
+    "INSERT INTO schema_version (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)"
   );
 
   for (const migration of migrations) {
-    if (appliedVersions.has(migration.version)) {
+    if (appliedMigrations.has(migration.version)) {
       continue;
     }
 
@@ -115,6 +200,7 @@ export function runMigrations(
       insertApplied.run(
         migration.version,
         migration.name,
+        computeMigrationChecksum(migration),
         new Date().toISOString()
       );
     });

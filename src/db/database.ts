@@ -5,8 +5,9 @@
  * environment variable (default: talenttrust.db).  Pass ':memory:' during
  * tests to use an ephemeral, isolated in-memory database.
  *
- * Runs schema migrations synchronously on first open so the tables are
- * guaranteed to exist before the application serves any requests.
+ * Runs schema migrations synchronously on first open so applied migration
+ * checksums are verified and tables are guaranteed to exist before the
+ * application serves any requests.
  *
  * Security notes:
  *  - All SQL statements in repositories use prepared statements / parameter
@@ -36,7 +37,13 @@ export function getDb(dbPath?: string): Database.Database {
     path.join(process.cwd(), "talenttrust.db");
 
   instance = new Database(resolvedPath);
+
+  // Apply idempotent pragmas for performance and concurrency
   instance.pragma("journal_mode = WAL"); // Better concurrency
+  instance.pragma("synchronous = NORMAL"); // Balance durability and performance
+  const busyTimeout = parseInt(process.env["DB_BUSY_TIMEOUT"] ?? "5000", 10);
+  instance.pragma(`busy_timeout = ${busyTimeout}`); // Configurable timeout (default 5000ms)
+
   instance.pragma("foreign_keys = ON"); // Enforce FK constraints
 
   runMigrations(instance);

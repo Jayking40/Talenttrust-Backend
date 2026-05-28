@@ -8,6 +8,19 @@ export interface CircuitBreakerConfig {
   timeoutMs: number;
 }
 
+/**
+ * Webhook retry policy configuration for transient failure recovery.
+ * Controls exponential backoff with jitter for retrying webhook deliveries
+ * before enqueuing to DLQ.
+ */
+export interface WebhookRetryConfig {
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  multiplier: number;
+  jitterFactor: number;
+}
+
 export interface AppConfig {
   port: number;
   gracefulDegradationEnabled: boolean;
@@ -17,6 +30,12 @@ export interface AppConfig {
   chaosTargets: string[];
   chaosProbability: number;
   circuitBreaker: CircuitBreakerConfig;
+  /**
+   * Per-provider circuit-breaker configuration for outbound webhook delivery.
+   * Thresholds are intentionally separate from the RPC circuit breaker so
+   * webhook and RPC failure modes can be tuned independently.
+   */
+  webhookCircuitBreaker: CircuitBreakerConfig;
 }
 
 const MAX_TIMEOUT_MS = 10_000;
@@ -97,6 +116,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       failureThreshold: clamp(toNumber(env.CB_FAILURE_THRESHOLD, 5), 1, 100),
       successThreshold: clamp(toNumber(env.CB_SUCCESS_THRESHOLD, 1), 1, 20),
       timeoutMs: clamp(toNumber(env.CB_TIMEOUT_MS, 30_000), 1_000, 300_000),
+    },
+    webhookCircuitBreaker: {
+      failureThreshold: clamp(toNumber(env.WEBHOOK_CB_FAILURE_THRESHOLD, 5), 1, 100),
+      successThreshold: clamp(toNumber(env.WEBHOOK_CB_SUCCESS_THRESHOLD, 1), 1, 20),
+      timeoutMs: clamp(toNumber(env.WEBHOOK_CB_TIMEOUT_MS, 60_000), 1_000, 300_000),
     },
   };
 }

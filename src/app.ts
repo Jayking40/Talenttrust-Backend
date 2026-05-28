@@ -18,6 +18,9 @@ import { rateLimitStore } from './config/rateLimit';
 import { notFoundHandler, errorHandler } from './middleware/errorHandlers';
 import { healthRouter as legacyHealthRouter } from './routes/health';
 import { healthRouter as readinessHealthRouter } from './health';
+import { healthRouter } from './routes/health';
+import { validateEnv } from './config/env.schema';
+import { createRequestLimitsMiddleware } from './middleware/requestLimits';
 
 import contractsModuleRouter from './routes/contracts.routes';
 
@@ -47,7 +50,8 @@ export function attachTerminalHandlers(app: express.Application): void {
  *
  * @returns Configured Express app instance (not yet listening).
  */
-export function createApp(): express.Application {
+export function createApp(options?: AppFactoryOptions): express.Application {
+  validateEnv();
   const app = express();
 
   // ── Security Middleware ───────────────────────────────────────────────────
@@ -58,6 +62,7 @@ export function createApp(): express.Application {
   );
 
   // ── Middleware ────────────────────────────────────────────────────────────
+  app.use(createRequestLimitsMiddleware());
   app.use(express.json());
   app.use(requestIdMiddleware);
   app.use(httpLoggerMiddleware);

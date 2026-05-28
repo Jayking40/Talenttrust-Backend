@@ -27,7 +27,14 @@
   "engines": {
     "node": ">=18"
   },
-  "keywords": ["blockchain", "events", "ingestion", "idempotency", "talenttrust", "api"],
+  "keywords": [
+    "blockchain",
+    "events",
+    "ingestion",
+    "idempotency",
+    "talenttrust",
+    "api"
+  ],
   "author": "Talenttrust Team",
   "license": "MIT",
   "dependencies": {
@@ -85,7 +92,7 @@
     "pino-pretty": "^13.0.0",
     "supertest": "^7.0.0",
     "swagger-cli": "^4.0.4",
-    "ts-jest": "^29.2.5",
+    "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
