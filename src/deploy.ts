@@ -70,6 +70,8 @@ async function checkHealth(port: string): Promise<boolean> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
 /**
  * Health-check function used by `switchToGreen`.
  * Replaced in tests via `setHealthChecker`.

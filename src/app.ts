@@ -18,7 +18,6 @@ import { rateLimitStore } from './config/rateLimit';
 import { notFoundHandler, errorHandler } from './middleware/errorHandlers';
 import { healthRouter as legacyHealthRouter } from './routes/health';
 import { healthRouter as readinessHealthRouter } from './health';
-import { healthRouter } from './routes/health';
 import { validateEnv } from './config/env.schema';
 import { createRequestLimitsMiddleware } from './middleware/requestLimits';
 

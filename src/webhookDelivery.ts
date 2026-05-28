@@ -279,6 +279,7 @@ export class WebhookDeliveryService {
         errorType = errWithStatus.code ?? 'unknown';
       }
     }
+    }
 
     const { status, reason } = getLabelValues(statusCode, errorType);
     const durationSeconds = endTimer({ status });
