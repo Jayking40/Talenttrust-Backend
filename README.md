@@ -38,6 +38,8 @@ The backend includes dependency-level chaos testing to simulate upstream outages
 
 Detailed architecture and security notes are in `docs/backend/chaos-testing.md`.
 
+Developer onboarding and blue-green local setup are documented in [docs/backend/developer-onboarding-blue-green.md](docs/backend/developer-onboarding-blue-green.md).
+
 ## Error Handling and Testing
 
 The backend enforces a consistent API error envelope and status-code policy across request validation, routing, dependency failures, and unexpected runtime errors.
