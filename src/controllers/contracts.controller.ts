@@ -1,14 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { ContractsService } from '../services/contracts.service';
-import { ContractRepository } from '../repositories/contractRepository';
-import { getDb } from '../db/database';
 import { CreateContractDto, UpdateContractDto } from '../modules/contracts/dto/contract.dto';
 import { CONTRACT_BOUNDS, ContractBoundsError } from '../contracts/bounds';
 import { NotFoundError } from '../errors/appError';
 import { parsePaginationQuery, applyPagination } from '../utils/pagination';
 import { ok, fail } from '../utils/apiResponse';
-
-const contractsService = new ContractsService(new ContractRepository(getDb()));
 
 interface ContractIdParams {
   id: string;
@@ -17,15 +13,22 @@ interface ContractIdParams {
 /**
  * Presentation layer for Contracts.
  * Handles HTTP requests, extracts parameters, and formulates responses.
- * Delegates core logic to the ContractsService.
+ * Delegates core logic to the injected ContractsService.
+ *
+ * @remarks Instantiate via `createContractsController(service)` to avoid
+ * module-level DB side effects and enable clean unit testing.
  */
 export class ContractsController {
+  /**
+   * @param service - Injected ContractsService instance
+   */
+  constructor(private readonly service: ContractsService) {}
 
   /**
    * GET /api/v1/contracts
    * Fetch a paginated list of escrow contracts.
    */
-  public static async getContracts(req: Request, res: Response, next: NextFunction) {
+  public async getContracts(req: Request, res: Response, next: NextFunction) {
     try {
       const pagination = parsePaginationQuery((req.query ?? {}) as Record<string, unknown>);
       if (!pagination.ok) {
@@ -33,7 +36,7 @@ export class ContractsController {
         return;
       }
 
-      const allContracts = await contractsService.getAllContracts();
+      const allContracts = await this.service.getAllContracts();
       const { page, limit, offset } = pagination.value;
       const pageItems = applyPagination(allContracts, { page, limit, offset });
       const total = allContracts.length;
@@ -51,11 +54,11 @@ export class ContractsController {
 
   /**
    * GET /api/v1/contracts/:id
-   * Fetch a single contract by ID (includes version field).
+   * Fetch a single contract by ID.
    */
-  public static async getContractById(req: Request, res: Response, next: NextFunction) {
+  public async getContractById(req: Request, res: Response, next: NextFunction) {
     try {
-      const contract = await contractsService.getContractById(req.params.id!);
+      const contract = await this.service.getContractById(req.params.id!);
       if (!contract) {
         throw new NotFoundError('The requested resource was not found');
       }
@@ -67,12 +70,12 @@ export class ContractsController {
 
   /**
    * POST /api/v1/contracts
-   * Create a new contract
+   * Create a new contract.
    */
-  public static async createContract(req: Request, res: Response, next: NextFunction) {
+  public async createContract(req: Request, res: Response, next: NextFunction) {
     try {
       const data: CreateContractDto = req.body;
-      const newContract = await contractsService.createContract(data);
+      const newContract = await this.service.createContract(data);
       ok(res, newContract, undefined, 201);
     } catch (error) {
       if (error instanceof ContractBoundsError) {
@@ -85,13 +88,13 @@ export class ContractsController {
 
   /**
    * PATCH /api/v1/contracts/:id
-   * Update an existing contract
+   * Update an existing contract.
    */
-  public static async updateContract(req: Request, res: Response, next: NextFunction) {
+  public async updateContract(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params as unknown as ContractIdParams;
       const updateData: UpdateContractDto = req.body;
-      const updatedContract = await contractsService.updateContract(id, updateData);
+      const updatedContract = await this.service.updateContract(id, updateData);
       ok(res, updatedContract);
     } catch (error) {
       if (error instanceof ContractBoundsError) {
@@ -104,12 +107,12 @@ export class ContractsController {
 
   /**
    * DELETE /api/v1/contracts/:id
-   * Delete a contract
+   * Delete a contract.
    */
-  public static async deleteContract(req: Request, res: Response, next: NextFunction) {
+  public async deleteContract(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params as unknown as ContractIdParams;
-      await contractsService.deleteContract(id);
+      await this.service.deleteContract(id);
       ok(res, { message: 'Contract deleted successfully' });
     } catch (error) {
       next(error);
@@ -118,11 +121,11 @@ export class ContractsController {
 
   /**
    * GET /api/v1/contracts/stats
-   * Get contract statistics
+   * Get contract statistics.
    */
-  public static async getContractStats(req: Request, res: Response, next: NextFunction) {
+  public async getContractStats(req: Request, res: Response, next: NextFunction) {
     try {
-      const stats = await contractsService.getContractStats();
+      const stats = await this.service.getContractStats();
       ok(res, stats);
     } catch (error) {
       if (error instanceof ContractBoundsError) {
@@ -137,7 +140,27 @@ export class ContractsController {
    * GET /api/v1/contracts/bounds
    * Returns the enforced per-contract limits for client discovery.
    */
-  public static getBounds(_req: Request, res: Response) {
+  public getBounds(_req: Request, res: Response) {
     ok(res, CONTRACT_BOUNDS);
   }
+}
+
+/**
+ * Factory function that creates a ContractsController with injected service.
+ * Use this in route registration to avoid module-level DB side effects.
+ *
+ * @param service - ContractsService instance to inject
+ * @returns Bound handler methods ready for use in Express routes
+ */
+export function createContractsController(service: ContractsService) {
+  const controller = new ContractsController(service);
+  return {
+    getContracts: controller.getContracts.bind(controller),
+    getContractById: controller.getContractById.bind(controller),
+    createContract: controller.createContract.bind(controller),
+    updateContract: controller.updateContract.bind(controller),
+    deleteContract: controller.deleteContract.bind(controller),
+    getContractStats: controller.getContractStats.bind(controller),
+    getBounds: controller.getBounds.bind(controller),
+  };
 }
