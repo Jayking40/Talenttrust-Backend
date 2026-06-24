@@ -135,7 +135,6 @@ export const envSchema = z.object({
 
   // Reputation Scoring Configuration
   REPUTATION_DECAY_LAMBDA: z.string()
-    .optional()
     .default('0.005')
     .transform((val) => parseFloat(val))
     .pipe(z.number()
@@ -143,7 +142,6 @@ export const envSchema = z.object({
       .max(1, 'REPUTATION_DECAY_LAMBDA must be less than or equal to 1')),
 
   REPUTATION_SCORE_ALGORITHM_VERSION: z.string()
-    .optional()
     .default('exp-decay-v1'),
 });
 
