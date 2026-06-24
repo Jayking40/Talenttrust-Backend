@@ -65,6 +65,23 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 3,
+    name: "create_smart_contract_events_table",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS smart_contract_events (
+          eventId TEXT PRIMARY KEY,
+          contractId TEXT NOT NULL,
+          eventType TEXT NOT NULL,
+          idempotencyKey TEXT,
+          payload TEXT,
+          timestamp TEXT NOT NULL,
+          UNIQUE(contractId, eventType, idempotencyKey)
+        );
+      `);
+    },
+  },
 ];
 
 function ensureMigrationTable(db: Database.Database): void {
