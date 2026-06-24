@@ -11,7 +11,7 @@
 
 import { ReputationService } from './reputation.service';
 import { getDb, closeDb } from '../db/database';
-import Database from 'better-sqlite3';
+import Database from '../db/betterSqlite3';
 import { ForbiddenError, ConflictError, ValidationError } from '../errors/appError';
 import { auditService } from '../audit/service';
 
