@@ -5,6 +5,8 @@ import { ContractRepository } from '../repositories/contractRepository';
 import { getDb } from '../db/database';
 import { validateSchema } from '../middleware/validate.middleware';
 import { createContractSchema, updateContractSchema } from '../modules/contracts/dto/contract.dto';
+import { requireAuth, requirePermission } from '../middleware/authorization';
+import type { AuthenticatedRequest } from '../lib/types';
 
 /**
  * Creates the contracts router with injected dependencies.
@@ -13,21 +15,69 @@ import { createContractSchema, updateContractSchema } from '../modules/contracts
  */
 function createContractsRouter(): Router {
   const router = Router();
-  const controller = createContractsController(
-    new ContractsService(new ContractRepository(getDb())),
+  const db = getDb();
+  const repo = new ContractRepository(db);
+  const controller = createContractsController(new ContractsService(repo));
+
+  /**
+   * Resolves the owner (clientId) of a contract from the DB.
+   * Used by requirePermission for ownOnly PATCH and DELETE checks.
+   * Returns null when the contract does not exist (triggers 404).
+   */
+  const getContractOwnerId = async (req: AuthenticatedRequest): Promise<string | null> => {
+    const contract = repo.findById(req.params.id ?? '');
+    return contract ? contract.clientId : null;
+  };
+
+  // GET /bounds — public-facing bounds, still requires auth
+  /** @permission contracts:read — admin, client (ownOnly), freelancer (ownOnly) */
+  router.get('/bounds', requireAuth, requirePermission('contracts', 'read'), controller.getBounds);
+
+  // GET /stats — aggregate statistics
+  /** @permission contracts:list — admin, client (ownOnly), freelancer (ownOnly) */
+  router.get('/stats', requireAuth, requirePermission('contracts', 'list'), controller.getContractStats);
+
+  // GET / — list all contracts
+  /** @permission contracts:list — admin, client (ownOnly), freelancer (ownOnly) */
+  router.get('/', requireAuth, requirePermission('contracts', 'list'), controller.getContracts);
+
+  // GET /:id — fetch single contract
+  /** @permission contracts:read — admin, client (ownOnly), freelancer (ownOnly) */
+  router.get(
+    '/:id',
+    requireAuth,
+    requirePermission('contracts', 'read', getContractOwnerId),
+    controller.getContractById,
   );
 
-  router.get('/bounds', controller.getBounds);
-  router.get('/stats', controller.getContractStats);
-  router.get('/', controller.getContracts);
-  router.get('/:id', controller.getContractById);
+  // POST / — create a new contract
+  /** @permission contracts:create — admin, client */
   router.post(
     '/',
+    requireAuth,
+    requirePermission('contracts', 'create'),
     validateSchema(createContractSchema),
     controller.createContract,
   );
-  router.patch('/:id', validateSchema(updateContractSchema), controller.updateContract);
-  router.delete('/:id', controller.deleteContract);
+
+  // PATCH /:id — update an existing contract (owner or admin only)
+  /** @permission contracts:update (ownOnly for client/freelancer) — admin, client, freelancer */
+  router.patch(
+    '/:id',
+    requireAuth,
+    requirePermission('contracts', 'update', getContractOwnerId),
+    validateSchema(updateContractSchema),
+    controller.updateContract,
+  );
+
+  // DELETE /:id — delete a contract (admin only per PERMISSION_MATRIX)
+  /** @permission contracts:delete — admin only */
+  router.delete(
+    '/:id',
+    requireAuth,
+    requirePermission('contracts', 'delete', getContractOwnerId),
+    controller.deleteContract,
+  );
 
   return router;
 }
