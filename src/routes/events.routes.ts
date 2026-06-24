@@ -1,61 +1,87 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import { eventIngestionService } from '../events/registry';
+import { Router, Request, Response } from 'express';
+import { z } from 'zod';
+import { ok, fail } from '../utils/apiResponse';
+import { EventAuditService, InMemoryEventAuditRepository } from '../repository/eventAuditRepository';
+import { validateContractEventPayload } from '../contracts/validation';
+import { getCorrelationId } from '../utils/correlationId';
+import { validateSchema } from '../middleware/validate.middleware';
 
-const router = Router();
+const eventAuditService = new EventAuditService(new InMemoryEventAuditRepository());
 
-router.post('/', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { events, contractType } = req.body as {
-      events?: unknown;
-      contractType?: unknown;
-    };
+export function createEventsRouter(): Router {
+  const router = Router();
 
-    if (!Array.isArray(events)) {
-      return res.status(400).json({ error: 'events array is required' });
+  router.post('/events', async (req: Request, res: Response) => {
+    const validation = validateContractEventPayload(req.body);
+    if (!validation.ok) {
+      return fail(res, 'invalid_event_payload', validation.reason, 400);
     }
 
-    if (typeof contractType !== 'string' || contractType.trim().length === 0) {
-      return res.status(400).json({ error: 'contractType is required' });
+    try {
+      const result = await eventAuditService.processEvent(
+        validation.event,
+        validation.event.type,
+        getCorrelationId(res),
+      );
+
+      if (result.status === 'accepted') {
+        return ok(
+          res,
+          {
+            status: 'accepted',
+            deduplicationKey: result.deduplicationKey,
+          },
+          undefined,
+          202,
+        );
+      }
+
+      if (result.status === 'duplicate') {
+        return ok(res, {
+          status: 'duplicate',
+          deduplicationKey: result.deduplicationKey,
+        });
+      }
+
+      return fail(
+        res,
+        result.code ?? 'event_rejected',
+        result.reason ?? 'Event rejected',
+        result.statusCode ?? 400,
+      );
+    } catch (error) {
+      return fail(res, 'internal_error', 'Failed to process event', 500);
+    }
+  });
+
+  router.post('/events/validate', (req: Request, res: Response) => {
+    const validation = validateContractEventPayload(req.body);
+    if (!validation.ok) {
+      return fail(res, 'invalid_event_payload', validation.reason, 400);
     }
 
-    const correlationId = typeof req.headers['x-correlation-id'] === 'string'
-      ? req.headers['x-correlation-id']
-      : undefined;
+    return ok(res, {
+      valid: true,
+      event: validation.event,
+    });
+  });
 
-    const results = await eventIngestionService.processBatch(events as any[], contractType, correlationId);
-    const summary = {
-      processed: results.length,
-      accepted: results.filter((item) => item.status === 'accepted').length,
-      duplicates: results.filter((item) => item.status === 'duplicate').length,
-      rejected: results.filter((item) => item.status === 'rejected').length,
-    };
+  router.get('/events/stats', async (_req: Request, res: Response) => {
+    const stats = await eventAuditService.getStatistics();
+    return ok(res, stats);
+  });
 
-    return res.status(200).json({ processed: results.length, results, summary });
-  } catch (error) {
-    next(error);
-  }
-});
+  router.get(
+    '/contracts/:contractId/history',
+    validateSchema(z.object({ params: z.object({ contractId: z.string().min(1) }) })),
+    async (req: Request, res: Response) => {
+      const { contractId } = req.params;
+      const history = await eventAuditService.getEventHistory(contractId);
+      return ok(res, history);
+    },
+  );
 
-router.post('/validate', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { event, contractType } = req.body as {
-      event?: unknown;
-      contractType?: unknown;
-    };
+  return router;
+}
 
-    if (event === undefined) {
-      return res.status(400).json({ error: 'event is required' });
-    }
-
-    if (typeof contractType !== 'string' || contractType.trim().length === 0) {
-      return res.status(400).json({ error: 'contractType is required' });
-    }
-
-    const validation = eventIngestionService.validateEvent(event, contractType);
-    return res.status(200).json(validation);
-  } catch (error) {
-    next(error);
-  }
-});
-
-export default router;
+export default createEventsRouter();

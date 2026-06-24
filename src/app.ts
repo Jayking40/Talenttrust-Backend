@@ -29,6 +29,7 @@ import configRouter from './routes/config.routes';
 import dependencyScanRouter from './routes/dependency-scan.routes';
 import { adminRouter } from './routes/admin.routes';
 import { deployRouter } from './routes/deploy.routes';
+import eventsRouter from './routes/events.routes';
 import { requestIdMiddleware } from './middleware/requestId';
 import { httpLoggerMiddleware } from './middleware/httpLogger';
 import { ReputationService } from './services/reputation.service';
@@ -80,15 +81,7 @@ export function createApp(options?: AppFactoryOptions): express.Application {
   app.use('/health', legacyHealthRouter);
   app.use('/health', readinessHealthRouter);
   app.use('/api/config', configRouter);
-  app.use('/api/v1/events', eventsRouter);
-  app.get('/api/v1/stats', async (_req, res, next) => {
-    try {
-      const stats = await eventIngestionService.getStatistics();
-      res.status(200).json(stats);
-    } catch (error) {
-      next(error);
-    }
-  });
+  app.use('/api/v1', eventsRouter);
   app.use('/api/v1/contracts', contractsModuleRouter);
   app.use('/api/v1/reputation', reputationRouter);
   app.use('/api/v1/dependency-scan', dependencyScanRouter);
