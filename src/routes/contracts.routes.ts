@@ -1,10 +1,11 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { createContractsController } from '../controllers/contracts.controller';
 import { ContractsService } from '../services/contracts.service';
 import { ContractRepository } from '../repositories/contractRepository';
 import { getDb } from '../db/database';
 import { validateSchema } from '../middleware/validate.middleware';
 import { createContractSchema, updateContractSchema } from '../modules/contracts/dto/contract.dto';
+import { eventIngestionService } from '../events/registry';
 
 /**
  * Creates the contracts router with injected dependencies.
@@ -20,6 +21,14 @@ function createContractsRouter(): Router {
   router.get('/bounds', controller.getBounds);
   router.get('/stats', controller.getContractStats);
   router.get('/', controller.getContracts);
+  router.get('/:id/history', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const history = await eventIngestionService.getContractHistory(req.params.id);
+      res.status(200).json(history);
+    } catch (error) {
+      next(error);
+    }
+  });
   router.get('/:id', controller.getContractById);
   router.post(
     '/',
