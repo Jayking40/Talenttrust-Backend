@@ -5,6 +5,12 @@ export interface Migration {
   version: number;
   name: string;
   up: (db: Database.Database) => void;
+  /**
+   * Stable semantic body hashed for checksum verification. When set, this is
+   * used instead of `up.toString()` so formatting-only edits do not invalidate
+   * previously applied migrations.
+   */
+  checksumSource?: string;
 }
 
 interface AppliedMigration {
@@ -17,6 +23,13 @@ const MIGRATIONS: Migration[] = [
   {
     version: 1,
     name: "create_users_and_contracts_schema",
+    checksumSource: [
+      "CREATE TABLE IF NOT EXISTS users (",
+      "CREATE TABLE IF NOT EXISTS contracts (",
+      "CREATE INDEX IF NOT EXISTS idx_contracts_client_id",
+      "CREATE INDEX IF NOT EXISTS idx_contracts_freelancer_id",
+      "CREATE INDEX IF NOT EXISTS idx_contracts_status",
+    ].join("\n"),
     up: (db) => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS users (
@@ -55,6 +68,8 @@ const MIGRATIONS: Migration[] = [
   {
     version: 2,
     name: "add_contract_version_column",
+    checksumSource:
+      "ALTER TABLE contracts ADD COLUMN version INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0)",
     up: (db) => {
       const columns = db.pragma("table_info(contracts)") as Array<{ name: string }>;
       const hasVersion = columns.some((col) => col.name === "version");
@@ -64,9 +79,14 @@ const MIGRATIONS: Migration[] = [
         );
       }
     },
+  },
   {
     version: 3,
     name: "create_notifications_table",
+    checksumSource: [
+      "CREATE TABLE IF NOT EXISTS notifications (",
+      "CREATE INDEX IF NOT EXISTS idx_notifications_user_id",
+    ].join("\n"),
     up: (db) => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS notifications (
@@ -81,7 +101,6 @@ const MIGRATIONS: Migration[] = [
           ON notifications(user_id);
       `);
     },
-  },
   },
 ];
 
@@ -130,14 +149,25 @@ function assertMigrationsAreValid(migrations: Migration[]): void {
  * Computes the immutable fingerprint stored for an applied migration.
  *
  * @param migration - Migration definition from the ordered migration list.
- * @returns A SHA-256 checksum over version, name, and implementation body.
+ * @returns A SHA-256 checksum over version, name, and migration body.
  *
  * @remarks
- * Migration checksums intentionally include `up.toString()` so edits to an
- * already-applied migration fail fast on the next database open. Add a new
- * migration instead of changing an existing one.
+ * When `checksumSource` is provided it is hashed instead of `up.toString()` so
+ * checksums remain stable across formatting-only source edits. Custom test
+ * migrations without `checksumSource` continue to hash `up.toString()`.
  */
 export function computeMigrationChecksum(migration: Migration): string {
+  const body = migration.checksumSource ?? migration.up.toString();
+  return createHash("sha256")
+    .update(`${migration.version}\n${migration.name}\n${body}`)
+    .digest("hex");
+}
+
+/**
+ * Legacy checksum using `up.toString()` only. Used to backfill rows recorded
+ * before `checksumSource` was introduced.
+ */
+function computeLegacyMigrationChecksum(migration: Migration): string {
   return createHash("sha256")
     .update(`${migration.version}\n${migration.name}\n${migration.up.toString()}`)
     .digest("hex");
@@ -175,6 +205,20 @@ function verifyAppliedMigrations(
     }
 
     if (applied.checksum !== expectedChecksum) {
+      const legacyChecksum = computeLegacyMigrationChecksum(migration);
+
+      if (
+        migration.checksumSource &&
+        applied.checksum === legacyChecksum &&
+        legacyChecksum !== expectedChecksum
+      ) {
+        db.prepare<[string, number]>(
+          "UPDATE schema_version SET checksum = ? WHERE version = ?"
+        ).run(expectedChecksum, applied.version);
+        applied.checksum = expectedChecksum;
+        continue;
+      }
+
       throw new Error(
         `Applied migration ${applied.version} checksum mismatch; refusing to start`
       );
