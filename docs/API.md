@@ -208,6 +208,28 @@ Reverts traffic to the blue instance. Idempotent if already blue (returns `200 O
 
 The Contracts API provides endpoints for managing escrow contract records. Contract records include a `version` field that enables Optimistic Concurrency Control (OCC) on update operations.
 
+### Authentication & Authorization
+
+All contract endpoints require a valid `Authorization: Bearer <jwt>` header (HS256, signed with `JWT_SECRET`).
+
+#### Role-based access matrix
+
+| Method | Path | admin | client | freelancer |
+|--------|------|-------|--------|------------|
+| GET | `/contracts` | ✅ | ❌ (ownOnly — collection requires owner resolver) | ❌ (ownOnly) |
+| POST | `/contracts` | ✅ | ✅ | ❌ |
+| GET | `/contracts/:id` | ✅ | ✅ (ownOnly) | ✅ (ownOnly) |
+| PATCH | `/contracts/:id` | ✅ | ✅ (ownOnly) | ✅ (ownOnly) |
+| DELETE | `/contracts/:id` | ✅ | ❌ | ❌ |
+
+**ownOnly** — the caller's JWT `sub` must equal the contract's `clientId`. The owner check is resolved from the database; it is never derived from caller-supplied parameters.
+
+#### Error responses
+
+- `401 Unauthorized` — missing header, malformed token, expired token, wrong secret, or invalid role claim.
+- `403 Forbidden` — authenticated but role/ownership check failed.
+- `404 Not Found` — the contract does not exist (also returned by `requirePermission` when the `getResourceOwnerId` resolver returns `null`, to avoid leaking resource existence to non-owners).
+
 ### The `version` Field
 
 Every contract record carries a `version` field:

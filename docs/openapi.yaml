@@ -21,7 +21,9 @@ paths:
                 items:
                   $ref: "#/components/schemas/Contract"
         "401":
-          $ref: "#/components/responses/UnauthorizedError"
+          description: Unauthorized — missing or invalid JWT
+        "403":
+          description: Forbidden — insufficient permissions
     post:
       summary: Create a contract
       security:
@@ -39,87 +41,91 @@ paths:
               schema:
                 $ref: "#/components/schemas/Contract"
         "400":
-          $ref: "#/components/responses/ValidationError"
+          description: Validation error
         "401":
-          $ref: "#/components/responses/UnauthorizedError"
-
-  /contracts/bounds:
-    get:
-      summary: Get contract bounds
-      description: Retrieves global statistical bounds and limits for contracts.
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Contract bounds retrieved
-        "401":
-          $ref: "#/components/responses/UnauthorizedError"
-
-  /contracts/stats:
-    get:
-      summary: Get contract statistics
-      description: Retrieves contract system statistics (e.g., total active, completed volume).
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Contract statistics retrieved
-        "401":
-          $ref: "#/components/responses/UnauthorizedError"
+          description: Unauthorized — missing or invalid JWT
+        "403":
+          description: Forbidden — role does not have contracts:create permission
 
   /contracts/{id}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
     get:
-      summary: Get contract by ID
+      summary: Get a single contract by ID
       security:
         - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
-          description: Contract details
+          description: Contract found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Contract"
         "401":
-          $ref: "#/components/responses/UnauthorizedError"
+          description: Unauthorized
+        "403":
+          description: Forbidden — caller does not own this contract
         "404":
-          $ref: "#/components/responses/NotFoundError"
+          description: Contract not found
     patch:
-      summary: Update contract
+      summary: Update an existing contract (owner or admin only)
       security:
         - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                version:
-                  type: integer
-                title:
-                  type: string
+              $ref: "#/components/schemas/UpdateContract"
       responses:
         "200":
           description: Contract updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Contract"
         "400":
-          $ref: "#/components/responses/ValidationError"
+          description: Validation error
         "401":
-          $ref: "#/components/responses/UnauthorizedError"
+          description: Unauthorized
+        "403":
+          description: Forbidden — non-owner or insufficient role
+        "404":
+          description: Contract not found
         "409":
-          $ref: "#/components/responses/ConflictError"
+          description: Version conflict (OCC)
     delete:
-      summary: Delete contract
+      summary: Delete a contract (admin only)
       security:
         - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: Contract deleted
         "401":
-          $ref: "#/components/responses/UnauthorizedError"
+          description: Unauthorized
+        "403":
+          description: Forbidden — admin role required
         "404":
-          $ref: "#/components/responses/NotFoundError"
+          description: Contract not found
 
   /contracts/{contractId}/metadata:
     parameters:
@@ -701,6 +707,26 @@ components:
           type: boolean
           example: false
       additionalProperties: false
+
+    UpdateContract:
+      type: object
+      required:
+        - version
+      properties:
+        version:
+          type: integer
+          minimum: 0
+          description: OCC version — must match the current stored version
+          example: 0
+        title:
+          type: string
+          minLength: 5
+          maxLength: 100
+          example: Updated Contract Title
+        status:
+          type: string
+          enum: [draft, active, completed, cancelled, disputed]
+          example: active
 
     UpdateReputation:
       type: object

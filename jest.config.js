@@ -22,7 +22,6 @@ module.exports = {
     'src/auth/__tests__/roles.test.ts',
     'src/config/config.test.ts',
     'src/controllers/__tests__/apiKeyController.test.ts',
-    'src/controllers/contracts.integration.test.ts',
     'src/httpClient.test.ts',
     'src/index.test.ts',
     'src/logger.test.ts',
