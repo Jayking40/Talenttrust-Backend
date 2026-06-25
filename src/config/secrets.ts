@@ -213,7 +213,7 @@ export class RotatingSecret<T = string> implements Secret<T> {
       const raw = await this.provider();
       const newVal = this.transform ? this.transform(raw) : (raw as unknown as T);
       this.value = newVal;
-    } catch (err) {
+    } catch {
       // Do not log secret values. Log only that refresh failed and include
       // the secret name for context. Preserve previous value (fail-safe).
       try {
