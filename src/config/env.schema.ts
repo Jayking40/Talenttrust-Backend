@@ -146,6 +146,19 @@ export const envSchema = z.object({
 
   REPUTATION_SCORE_ALGORITHM_VERSION: z.string()
     .default('exp-decay-v1'),
+
+  // Email Transport Configuration
+  EMAIL_PROVIDER: z.enum(['console', 'smtp', 'ses', 'sendgrid']).default('console'),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.string().optional().transform(val => val ? parseInt(val, 10) : undefined).pipe(z.number().int().min(1).max(65535).optional()),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  SMTP_FROM: z.string().email().optional(),
+  SMTP_SECURE: z.string().optional().transform(val => val === 'true'),
+  AWS_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().optional(),
+  AWS_REGION: z.string().optional(),
+  SENDGRID_API_KEY: z.string().optional(),
 });
 
 
