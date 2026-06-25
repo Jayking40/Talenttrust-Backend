@@ -66,8 +66,6 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
-  {
-    version: 3,
 {
   version: 3,
   name: "create_smart_contract_events_table",
@@ -136,10 +134,6 @@ const MIGRATIONS: Migration[] = [
     `);
   },
 },
-        );
-      `);
-    },
-  },
 ];
 
 // Version 6: deployment_history table
@@ -162,6 +156,35 @@ MIGRATIONS.push({
       );
       CREATE INDEX IF NOT EXISTS idx_deployment_history_env_from ON deployment_history(environment_from);
       CREATE INDEX IF NOT EXISTS idx_deployment_history_env_to ON deployment_history(environment_to);
+    `);
+  },
+});
+
+// Version 7: add key_selector to api_keys for O(1) indexed lookup
+MIGRATIONS.push({
+  version: 7,
+  name: "add_key_selector_to_api_keys",
+  checksumSource: [
+    "CREATE TABLE IF NOT EXISTS api_keys (",
+    "key_selector TEXT NOT NULL UNIQUE",
+  ].join("\n"),
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id            TEXT    PRIMARY KEY,
+        name          TEXT    NOT NULL,
+        key_hash      TEXT    NOT NULL,
+        key_selector  TEXT    NOT NULL UNIQUE,
+        scope         TEXT    NOT NULL DEFAULT '[]',
+        created_by    TEXT    NOT NULL,
+        created_at    TEXT    NOT NULL,
+        updated_at    TEXT    NOT NULL,
+        expires_at    TEXT,
+        last_used_at  TEXT,
+        is_active     INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_api_keys_key_selector
+        ON api_keys(key_selector);
     `);
   },
 });
