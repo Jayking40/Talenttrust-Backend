@@ -64,18 +64,33 @@ function serializeError(err: Error): Record<string, unknown> {
  * Extend this list as the domain grows.
  */
 const SENSITIVE_KEYS = new Set([
-  'password',
-  'secret',
-  'token',
   'authorization',
   'cookie',
-  'privatekey',
-  'mnemonic',
-  'seed',
-  'email',
-  'credit_card',
-  'ssn',
+  'set-cookie',
+  'x-api-key',
+  'x-api-secret',
+  'x-auth-token',
+  'x-access-token',
+  'proxy-authorization',
+  'password',
+  'passwd',
+  'secret',
+  'token',
+  'access_token',
+  'refresh_token',
   'api_key',
+  'apikey',
+  'credential',
+  'private',
+  'ssn',
+  'credit_card',
+  'webhooksecret',
+  'webhook_secret',
+]);
+
+const redactionPaths = Array.from(SENSITIVE_KEYS).flatMap(key => [
+  key,
+  `*.${key}`,
 ]);
 
 function sanitize(obj: Record<string, unknown>): Record<string, unknown> {

@@ -25,7 +25,11 @@ export type AuditAction =
   | 'AUTH_LOGIN'
   | 'AUTH_LOGOUT'
   | 'AUTH_FAILED'
-  | 'ADMIN_ACTION';
+  | 'ADMIN_ACTION'
+  | 'ENDPOINT_ACCESS'
+  | 'ENDPOINT_MUTATION'
+  | 'DEPLOYMENT_PROMOTED'
+  | 'DEPLOYMENT_ROLLED_BACK';
 
 /** Severity level of the audit event. */
 export type AuditSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
@@ -81,7 +85,7 @@ export interface AuditQuery {
   from?: string;
   /** ISO-8601 end of time range (inclusive). */
   to?: string;
-  /** Maximum number of results to return (default: 100, max: 1000). */
+  /** Maximum number of results to return. Undefined means "no explicit limit". */
   limit?: number;
   /** Zero-based offset for pagination. */
   offset?: number;
