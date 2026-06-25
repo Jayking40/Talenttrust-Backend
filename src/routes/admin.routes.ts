@@ -10,6 +10,7 @@
 import { Router, Request, Response } from 'express';
 import { QueueManager, getWebhookDLQStorage } from '../queue';
 import { requireAuth, requireRole } from '../middleware/authorization';
+import { adminAuthGuard } from '../middleware/adminAuthGuard';
 import { circuitBreakerRegistry } from '../circuit-breaker/registry';
 import { WebhookService } from '../services/webhook.service';
 
