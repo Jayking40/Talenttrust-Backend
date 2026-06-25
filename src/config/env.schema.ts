@@ -146,6 +146,12 @@ export const envSchema = z.object({
 
   REPUTATION_SCORE_ALGORITHM_VERSION: z.string()
     .default('exp-decay-v1'),
+
+  // SSRF Configuration
+  SSRF_ALLOW_PRIVATE_HOSTS: z.string()
+    .optional()
+    .transform((val) => val === 'true' || val === '1')
+    .pipe(z.boolean().optional()),
 });
 
 
