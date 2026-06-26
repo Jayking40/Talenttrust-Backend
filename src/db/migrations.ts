@@ -69,23 +69,22 @@ const MIGRATIONS: Migration[] = [
   {
     version: 3,
     name: "create_smart_contract_events_table",
-    checksumSource: [
-      "CREATE TABLE IF NOT EXISTS smart_contract_events (",
-      "UNIQUE(contractId, eventType, idempotencyKey)",
-    ].join("\n"),
-    up: (db) => {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS smart_contract_events (
-          eventId TEXT PRIMARY KEY,
-          contractId TEXT NOT NULL,
-          eventType TEXT NOT NULL,
-          idempotencyKey TEXT,
-          payload TEXT,
-          timestamp TEXT NOT NULL,
-          UNIQUE(contractId, eventType, idempotencyKey)
-        );
-      `);
-    },
+  checksumSource: [
+    "CREATE TABLE IF NOT EXISTS smart_contract_events (",
+    "UNIQUE(contractId, eventType, idempotencyKey)",
+  ].join("\n"),
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS smart_contract_events (
+        eventId TEXT PRIMARY KEY,
+        contractId TEXT NOT NULL,
+        eventType TEXT NOT NULL,
+        idempotencyKey TEXT,
+        payload TEXT,
+        timestamp TEXT NOT NULL,
+        UNIQUE(contractId, eventType, idempotencyKey)
+      );
+    `);
   },
   {
     version: 4,
@@ -116,24 +115,25 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
-  {
-    version: 5,
-    name: "create_transactions_table",
-    checksumSource: [
-      "CREATE TABLE IF NOT EXISTS transactions (",
-    ].join("\n"),
-    up: (db) => {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS transactions (
-          hash            TEXT    PRIMARY KEY,
-          status          TEXT    NOT NULL,
-          receipt         TEXT,
-          last_checked_at TEXT,
-          retry_count     INTEGER NOT NULL DEFAULT 0
-        );
-      `);
-    },
+},
+{
+  version: 5,
+  name: "create_transactions_table",
+  checksumSource: [
+    "CREATE TABLE IF NOT EXISTS transactions (",
+  ].join("\n"),
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        hash            TEXT    PRIMARY KEY,
+        status          TEXT    NOT NULL,
+        receipt         TEXT,
+        last_checked_at TEXT,
+        retry_count     INTEGER NOT NULL DEFAULT 0
+      );
+    `);
   },
+},
 ];
 
 // Version 6: deployment_history table
@@ -160,32 +160,43 @@ MIGRATIONS.push({
   },
 });
 
-// Version 7: add key_selector to api_keys for O(1) indexed lookup
+// Version 7: retention storage tables for the SqliteStorageProvider
 MIGRATIONS.push({
   version: 7,
-  name: "add_key_selector_to_api_keys",
-  checksumSource: [
-    "CREATE TABLE IF NOT EXISTS api_keys (",
-    "key_selector TEXT NOT NULL UNIQUE",
-  ].join("\n"),
+  name: "create_retention_storage_tables",
   up: (db) => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS api_keys (
-        id            TEXT    PRIMARY KEY,
-        name          TEXT    NOT NULL,
-        key_hash      TEXT    NOT NULL,
-        key_selector  TEXT    NOT NULL UNIQUE,
-        scope         TEXT    NOT NULL DEFAULT '[]',
-        created_by    TEXT    NOT NULL,
-        created_at    TEXT    NOT NULL,
-        updated_at    TEXT    NOT NULL,
-        expires_at    TEXT,
-        last_used_at  TEXT,
-        is_active     INTEGER NOT NULL DEFAULT 1
-      );
-      CREATE INDEX IF NOT EXISTS idx_api_keys_key_selector
-        ON api_keys(key_selector);
-    `);
+    // The retention module uses two independent provider instances (local + archive),
+    // so we create two physically separate tables rather than a single table with a
+    // discriminator column. This keeps each LRU-style operation constrained to its
+    // own table and avoids accidental cross-storage-type data leaks.
+    const createRetentionTable = (tableName: string): void => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ${tableName} (
+          id                    TEXT    PRIMARY KEY,
+          entity_type           TEXT    NOT NULL,
+          data                  TEXT    NOT NULL,
+          classification        TEXT    NOT NULL,
+          created_at            TEXT    NOT NULL,
+          expires_at            TEXT    NOT NULL,
+          archived_at           TEXT,
+          archived_location     TEXT,
+          is_archived           INTEGER NOT NULL CHECK (is_archived IN (0, 1)),
+          retention_policy_id   TEXT,
+          metadata              TEXT,
+          updated_at            TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_${tableName}_entity_type
+          ON ${tableName}(entity_type);
+        CREATE INDEX IF NOT EXISTS idx_${tableName}_is_archived
+          ON ${tableName}(is_archived);
+        CREATE INDEX IF NOT EXISTS idx_${tableName}_expires_at
+          ON ${tableName}(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_${tableName}_created_at
+          ON ${tableName}(created_at);
+      `);
+    };
+    createRetentionTable("retention_local");
+    createRetentionTable("retention_archive");
   },
 });
 
@@ -234,15 +245,39 @@ function assertMigrationsAreValid(migrations: Migration[]): void {
  * Computes the immutable fingerprint stored for an applied migration.
  *
  * @param migration - Migration definition from the ordered migration list.
- * @returns A SHA-256 checksum over version, name, and implementation body.
+ * @returns A SHA-256 checksum over version, name, and a body fingerprint.
  *
  * @remarks
  * Migration checksums intentionally include `up.toString()` so edits to an
  * already-applied migration fail fast on the next database open. Add a new
  * migration instead of changing an existing one.
+ *
+ * Migrations may opt into a stable `checksumSource` (e.g. a short DDL
+ * fingerprint) so that editorial whitespace / commenting changes do not
+ * invalidate checksums on existing deployments. When a `checksumSource` is
+ * declared, it is preferred over the live `up.toString()` so that the
+ * fingerprint matches what is currently stored in production databases.
  */
 export function computeMigrationChecksum(migration: Migration): string {
   const source = migration.checksumSource ?? migration.up.toString();
+  return createHash("sha256")
+    .update(`${migration.version}\n${migration.name}\n${source}`)
+    .digest("hex");
+}
+
+/**
+ * Computes the legacy fingerprint (the value that was stored for a migration
+ * before `checksumSource` support was introduced). Used by
+ * {@link verifyAppliedMigrations} to detect and upgrade stored rows so that
+ * adding a `checksumSource` to a migration does not block startup.
+ *
+ * Returns `null` when the migration has no `checksumSource` — in that case
+ * the legacy and current fingerprints are identical and no upgrade is needed.
+ */
+export function computeLegacyMigrationChecksum(migration: Migration): string | null {
+  if (migration.checksumSource === undefined) {
+    return null;
+  }
   return createHash("sha256")
     .update(`${migration.version}\n${migration.name}\n${source}`)
     .digest("hex");
@@ -282,19 +317,20 @@ function verifyAppliedMigrations(
     }
 
     if (applied.checksum !== expectedChecksum) {
-      // Allow upgrade from up.toString() checksum to checksumSource checksum
-      if (migration.checksumSource !== undefined) {
-        const legacyChecksum = createHash("sha256")
-          .update(`${migration.version}\n${migration.name}\n${migration.up.toString()}`)
-          .digest("hex");
-        if (applied.checksum === legacyChecksum) {
-          db.prepare<[string, number]>(
-            "UPDATE schema_version SET checksum = ? WHERE version = ?"
-          ).run(expectedChecksum, applied.version);
-          applied.checksum = expectedChecksum;
-          continue;
-        }
+      // Upgrade path: a migration that newly declares a `checksumSource` will
+      // produce a different fingerprint than the legacy `up.toString()` value
+      // already stored in production databases. When that is the cause of the
+      // mismatch, transparently rewrite the stored row instead of refusing to
+      // start, so deployment only requires a one-time automatic upgrade.
+      const legacyChecksum = computeLegacyMigrationChecksum(migration);
+      if (legacyChecksum !== null && applied.checksum === legacyChecksum) {
+        db.prepare<[string, number]>(
+          "UPDATE schema_version SET checksum = ? WHERE version = ?"
+        ).run(expectedChecksum, applied.version);
+        applied.checksum = expectedChecksum;
+        continue;
       }
+
       throw new Error(
         `Applied migration ${applied.version} checksum mismatch; refusing to start`
       );

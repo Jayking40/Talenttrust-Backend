@@ -21,7 +21,7 @@ import Database, { type Database as DatabaseInstance } from "./betterSqlite3";
 import path from "path";
 import { runMigrations } from "./migrations";
 
-let instance: ReturnType<typeof Database> | null = null;
+let instance: DatabaseInstance | null = null;
 
 /**
  * Returns the shared database instance, creating it on first call.
@@ -29,7 +29,7 @@ let instance: ReturnType<typeof Database> | null = null;
  * @param dbPath - Optional path override (used by tests to pass ':memory:').
  *                 If omitted, falls back to DB_PATH env var or 'talenttrust.db'.
  */
-export function getDb(dbPath?: string): ReturnType<typeof Database> {
+export function getDb(dbPath?: string): DatabaseInstance {
   if (instance) return instance;
 
   const resolvedPath =
@@ -37,18 +37,21 @@ export function getDb(dbPath?: string): ReturnType<typeof Database> {
     process.env["DB_PATH"] ??
     path.join(process.cwd(), "talenttrust.db");
 
-  instance = new DatabaseConstructor(resolvedPath);
+  // `Database` (the default export from the wrapper) is the constructor; the
+  // result of `new Database(path)` is an instance whose type is `DatabaseInstance`.
+  const created = new Database(resolvedPath);
+  instance = created;
 
   // Apply idempotent pragmas for performance and concurrency
-  instance.pragma("journal_mode = WAL"); // Better concurrency
-  instance.pragma("synchronous = NORMAL"); // Balance durability and performance
+  created.pragma("journal_mode = WAL"); // Better concurrency
+  created.pragma("synchronous = NORMAL"); // Balance durability and performance
   const busyTimeout = parseInt(process.env["DB_BUSY_TIMEOUT"] ?? "5000", 10);
-  instance.pragma(`busy_timeout = ${busyTimeout}`); // Configurable timeout (default 5000ms)
+  created.pragma(`busy_timeout = ${busyTimeout}`); // Configurable timeout (default 5000ms)
 
-  instance.pragma("foreign_keys = ON"); // Enforce FK constraints
+  created.pragma("foreign_keys = ON"); // Enforce FK constraints
 
-  runMigrations(instance);
-  return instance;
+  runMigrations(created);
+  return created;
 }
 
 /**
