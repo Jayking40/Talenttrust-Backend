@@ -42,7 +42,7 @@ export const envSchema = z.object({
   DATABASE_URL: z.string().optional(),
 
   // Secrets
-  JWT_SECRET: z.string().min(8, "JWT_SECRET must be at least 8 characters").optional(),
+  JWT_SECRET: z.string(), // Required in non-test environments, validated by superRefine
   // Compliance audit HMAC secret – required for proof generation.
   COMPLIANCE_AUDIT_SECRET: z.string()
     .min(32, "COMPLIANCE_AUDIT_SECRET must be at least 32 characters")
@@ -146,13 +146,23 @@ export const envSchema = z.object({
 
   REPUTATION_SCORE_ALGORITHM_VERSION: z.string()
     .default('exp-decay-v1'),
-
-  // SSRF Configuration
-  SSRF_ALLOW_PRIVATE_HOSTS: z.string()
-    .optional()
-    .transform((val) => val === 'true' || val === '1')
-    .pipe(z.boolean().optional()),
-});
+  .superRefine((obj, ctx) => {
+    if (obj.NODE_ENV !== 'test') {
+      if (!obj.JWT_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['JWT_SECRET'],
+          message: 'JWT_SECRET is required in non-test environments',
+        });
+      } else if (obj.JWT_SECRET.length < 32) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['JWT_SECRET'],
+          message: 'JWT_SECRET must be at least 32 characters in non-test environments',
+        });
+      }
+    }
+  });
 
 
 export type EnvConfig = z.infer<typeof envSchema>;
